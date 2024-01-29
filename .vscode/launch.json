@@ -3,17 +3,11 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug example 'save_as_pdf'",
+            "name": "Debug main",
             "cargo": {
                 "args": [
-                    "build",
-                    "--example=save_as_pdf",
-                    "--package=ippper"
-                ],
-                "filter": {
-                    "name": "save_as_pdf",
-                    "kind": "example"
-                }
+                    "build"
+                ]
             },
             "args": [],
             "cwd": "${workspaceFolder}"

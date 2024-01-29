@@ -1,14 +1,8 @@
 [package]
-authors = ["ArcticLampyrid <ArcticLampyrid@outlook.com>"]
-categories = ["network-programming"]
-description = "A library for building simple ipp servers"
-documentation = "https://docs.rs/ippper"
-edition = "2018"
-keywords = ["ipp-server", "ipp", "print"]
+name = "nercprint"
+authors = ["ArcticLampyrid <ArcticLampyrid@outlook.com>", "Nikita Sychev <root@nsychev.ru>"]
+edition = "2021"
 license = "BSD-3-Clause"
-name = "ippper"
-readme = "README.md"
-repository = "https://github.com/ArcticLampyrid/ippper.rs/"
 version = "0.3.0"
 
 [dependencies]
@@ -24,6 +18,9 @@ thiserror = "1.0"
 tokio = {version = "1", features = ["rt-multi-thread", "macros"], default-features = false}
 tokio-util = {version = "0.7", features = ["io", "compat"], default-features = false}
 uuid = "1"
-
-[[example]]
-name = "save_as_pdf"
+lopdf = { version = "0.32.0", features = ["chrono_time", "nom_parser"], default-features = false }
+png = "0.17.2"
+rusttype = "*"
+imageproc = "*"
+image = "*"
+printers = "*"

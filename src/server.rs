@@ -3,6 +3,7 @@ use crate::result::IppResult;
 use anyhow;
 use async_trait::async_trait;
 use futures::stream::TryStreamExt;
+use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Method;
 use hyper::{Body, Request, Response, Server};
@@ -28,7 +29,7 @@ fn operation_not_supported() -> anyhow::Error {
 
 #[async_trait]
 pub trait IppServerHandler: Send + Sync + 'static {
-    async fn print_job(&self, _req: IppRequestResponse) -> IppResult {
+    async fn print_job(&self, _req: IppRequestResponse, _remote_addr: &SocketAddr) -> IppResult {
         Err(operation_not_supported())
     }
 
@@ -125,7 +126,7 @@ pub trait IppServerHandler: Send + Sync + 'static {
         resp
     }
 
-    async fn handle_request(&self, req: IppRequestResponse) -> IppRequestResponse {
+    async fn handle_request(&self, req: IppRequestResponse, remote_addr: &SocketAddr) -> IppRequestResponse {
         let req_id = req.header().request_id;
         if !self.check_version(&req) {
             return self.build_error_response(
@@ -141,7 +142,7 @@ pub trait IppServerHandler: Send + Sync + 'static {
         let version = req.header().version;
         match Operation::from_u16(req.header().operation_or_status) {
             Some(op) => match op {
-                Operation::PrintJob => self.print_job(req).await,
+                Operation::PrintJob => self.print_job(req, remote_addr).await,
                 Operation::PrintUri => self.print_uri(req).await,
                 Operation::ValidateJob => self.validate_job(req).await,
                 Operation::CreateJob => self.create_job(req).await,
@@ -173,15 +174,17 @@ impl IppServer {
         handler: Arc<impl IppServerHandler>,
     ) -> std::result::Result<(), hyper::Error> {
         let addr = addr;
-        let make_svc = make_service_fn(|_conn| {
+        let make_svc = make_service_fn(move |conn: &AddrStream| {
             let handler = handler.clone();
+            let remote_addr: SocketAddr = conn.remote_addr().clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
                     let handler = handler.clone();
-                    Self::handle(req, handler)
+                    Self::handle(req, handler, remote_addr)
                 }))
             }
         });
+
         let server = Server::bind(&addr).serve(make_svc);
         server.await
     }
@@ -189,6 +192,7 @@ impl IppServer {
     async fn handle(
         req: Request<Body>,
         handler: Arc<impl IppServerHandler>,
+        remote_addr: SocketAddr
     ) -> Result<Response<Body>, anyhow::Error> {
         if req.method() == Method::GET {
             return match req.uri().path() {
@@ -207,7 +211,7 @@ impl IppServer {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
             .into_async_read();
         let ipp_request = AsyncIppParser::new(reader).parse().await?;
-        let response = handler.handle_request(ipp_request).await;
+        let response = handler.handle_request(ipp_request, &remote_addr).await;
         let body = Body::wrap_stream(ReaderStream::new(response.into_async_read().compat()));
         Ok(Response::builder()
             .status(200)

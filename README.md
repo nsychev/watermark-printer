@@ -1,17 +1,21 @@
-# ippper
+A slightly refactored version of [ippper.rs](https://github.com/ArcticLampyrid/ippper.rs).
 
-[![crates.io](https://img.shields.io/crates/v/ippper.svg)](https://crates.io/crates/ippper)
-[![Released API docs](https://docs.rs/ippper/badge.svg)](https://docs.rs/ippper)
-[![BSD 3 Clause licensed](https://img.shields.io/badge/license-BSD%203%20Clause-blue)](./LICENSE.md)
+## TODO:
 
-A library for building simple ipp servers.  
-A **very basic** implementation of ipp is provided as `ippper::service::SimpleIppService`. This is very basic, but enough to fool Android Printer Service.
+1. Linux client support: CUPS “Generic PDF Printer” refuses to send raw PDF jobs, but instead sends HP/JL (PJL) files. It's trivial to convert them to PDF, but it needs a bit of time.
 
-- Easy to use
-- Asynchronous design
+2. (maybe?) Log all jobs.
 
-## "Low-level"
-ippper is a relatively low-level library.
+3. Command-line interface to choose settings (e.g. virtual printer name, target printer, etc).
 
-## License
-Licensed under [BSD 3 Clause](./LICENSE.md)
+4. Test against CUPS Class.
+
+## How to run (Windows, Linux)
+
+1. Install CUPS and libcups(?) if you're using Linux.
+
+2. Ensure there is a printer connected to your PC.
+
+3. Then run `cargo run`.
+
+4. Add IPP printer `http://<IP>:1337`. Ensure to specify `http` scheme if you're on Windows.

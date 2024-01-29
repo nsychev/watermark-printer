@@ -9,6 +9,7 @@ use ipp::model::{DelimiterTag, IppVersion, JobState, Operation, PrinterState, St
 use ipp::payload::IppPayload;
 use ipp::request::IppRequestResponse;
 use ipp::value::IppValue;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -18,6 +19,7 @@ pub trait SimpleIppServiceHandler: Send + Sync + 'static {
     async fn handle_document(
         &self,
         _document: SimpleIppDocument,
+        _remote_addr: &SocketAddr,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -286,7 +288,7 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
     fn version(&self) -> IppVersion {
         IppVersion::v2_0()
     }
-    async fn print_job(&self, req: IppRequestResponse) -> IppResult {
+    async fn print_job(&self, req: IppRequestResponse, remote_addr: &SocketAddr) -> IppResult {
         let format = req
             .attributes()
             .groups_of(DelimiterTag::OperationAttributes)
@@ -321,25 +323,28 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
                 .into());
             }
         }
-        match compression {
+        eprintln!("Received job {}", req_id);
+        let result = match compression {
             None => {
-                self.handler
-                    .handle_document(SimpleIppDocument{
+                self.handler.handle_document(
+                    SimpleIppDocument{
                         format, 
                         payload: req.into_payload()
-                    })
-                    .await?
+                    },
+                    remote_addr
+                ).await
             }
             Some("gzip") => {
                 let raw_payload = req.into_payload();
                 let decoder = bufread::GzipDecoder::new(futures::io::BufReader::new(raw_payload));
                 let payload = IppPayload::new_async(decoder);
-                self.handler
-                    .handle_document(SimpleIppDocument{
+                self.handler.handle_document(
+                    SimpleIppDocument{
                         format, 
                         payload
-                    })
-                    .await?
+                    },
+                    remote_addr
+                ).await
             }
             _ => {
                 return Err(IppError {
@@ -348,12 +353,20 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
                 }
                 .into())
             }
-        }
-        let mut resp = IppRequestResponse::new_response(
-            version,
-            StatusCode::SuccessfulOk,
-            req_id,
-        );
+        };
+
+        let mut resp = match result {
+            Ok(_) => IppRequestResponse::new_response(version, StatusCode::SuccessfulOk, req_id),
+            Err(e) => {
+                eprintln!("Job {} failed: {:?}", req_id, e);
+                return Err(IppError {
+                    code: StatusCode::ServerErrorInternalError,
+                    msg: format!("Print failed: {:?}", e)
+                }
+                .into())
+            }
+        };
+
         self.add_basic_attributes(&mut resp);
         resp.attributes_mut().add(
             DelimiterTag::JobAttributes,

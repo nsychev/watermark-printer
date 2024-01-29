@@ -5,3 +5,6 @@ pub mod error;
 pub mod result;
 pub mod server;
 pub mod service;
+pub mod image_xobject;
+pub mod drawer;
+pub mod watermark;
