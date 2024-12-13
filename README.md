@@ -1,21 +1,27 @@
+Virtual IPP Printer that adds watermarks and forwards job to another printer.
+
 A slightly refactored version of [ippper.rs](https://github.com/ArcticLampyrid/ippper.rs).
 
-## TODO:
+## Build
 
-1. Linux client support: CUPS “Generic PDF Printer” refuses to send raw PDF jobs, but instead sends HP/JL (PJL) files. It's trivial to convert them to PDF, but it needs a bit of time.
+Latest stable Rust will be fine. `cargo build -r` will do the job.
 
-2. (maybe?) Log all jobs.
+## How to run
 
-3. Command-line interface to choose settings (e.g. virtual printer name, target printer, etc).
+1. You need IPP support in your target printer. For example, if you have CUPS, it will work out of the box.
 
-4. Test against CUPS Class.
+   Fetch printer URL. E.g. for CUPS printer it will be `ipp://localhost:631/printers/name` or `ipp://localhost:631/classes/name`.
 
-## How to run (Windows, Linux)
+2. Run binary. The only required option is `--next-ipp <url>` that sets your printer URL.
+   
+   Also you can use `-n / --name <name>`, `-p / --port <port>` (default: 631), `-s / --storage <path>` (default: `/tmp/nercprint`).
 
-1. Install CUPS and libcups(?) if you're using Linux.
+3. Add IPP printer `http://<IP>:<PORT>`. Ensure to specify `http` scheme if you're on Windows.
 
-2. Ensure there is a printer connected to your PC.
+## How to customize
 
-3. Then run `cargo run`.
+We now print the THIRD octet of user IP address on the printout with leading zeroes.
 
-4. Add IPP printer `http://<IP>:1337`. Ensure to specify `http` scheme if you're on Windows.
+It can be changed in [`handler.rs`](src/handler.rs#L76).
+
+Sorry, but now it requires rebuilding.

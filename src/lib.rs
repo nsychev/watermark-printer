@@ -8,3 +8,5 @@ pub mod service;
 pub mod image_xobject;
 pub mod drawer;
 pub mod watermark;
+pub mod handler;
+pub mod pjl;

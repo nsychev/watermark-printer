@@ -1,11 +1,11 @@
 use image::{ImageBuffer, Rgba};
 use imageproc::drawing::{draw_text_mut, text_size};
 use imageproc::geometric_transformations::{warp, Interpolation, Projection};
-use rusttype::{Font, Scale};
+use ab_glyph::FontRef;
 
 pub struct WatermarkFactory {
-    font: Font<'static>,
-    scale: Scale
+    font: FontRef<'static>,
+    scale: f32
 }
 
 pub struct Image {
@@ -17,8 +17,8 @@ pub struct Image {
 impl WatermarkFactory {
     pub fn new() -> Self {
         Self {
-            font: Font::try_from_vec(Vec::from(include_bytes!("../resources/Inter-Black.ttf") as &[u8])).unwrap(),
-            scale: Scale { x: 128.0, y: 128.0 }
+            font: FontRef::try_from_slice(include_bytes!("../resources/Inter-Black.ttf") as &[u8]).unwrap(),
+            scale: 256.0
         }
     }
 
@@ -26,10 +26,10 @@ impl WatermarkFactory {
         let mut image = ImageBuffer::new(width, height);
 
         let size = text_size(self.scale, &self.font, &text);
-    
-        draw_text_mut(&mut image, Rgba([192u8, 192u8, 192u8, 64u8]), (width as i32 - size.0) / 2, (height as i32 - size.1) / 2, self.scale, &self.font, &text);
 
-        let projection = Projection::translate(0.5 * width as f32, 0.5 * height as f32) * Projection::scale(1.0, -1.0) * Projection::rotate(-0.45) * Projection::translate(-0.5 * width as f32, -0.5 * height as f32);
+        draw_text_mut(&mut image, Rgba([0u8, 0u8, 0u8, 64u8]), (width - size.0) as i32 / 2, (height - size.1) as i32 / 2, self.scale, &self.font, &text);
+
+        let projection = Projection::translate(0.5 * width as f32, 0.5 * height as f32) * /*Projection::scale(1.0, -1.0) * */ Projection::rotate(-0.45) * Projection::translate(-0.5 * width as f32, -0.5 * height as f32);
 
         Image {
             width, height,

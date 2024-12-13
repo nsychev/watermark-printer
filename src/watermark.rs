@@ -17,7 +17,6 @@ pub fn apply_watermark(document: &mut Document, image: Image, left: f32, top: f3
         document.add_xobject(page_id, xobject_id.as_bytes(), image_id)?;
 
         let mut content = document.get_and_decode_page_content(page_id)?;
-        document.get_page_content(page_id)?;
 
         content.operations.push(Operation::new("q", vec![]));
         content.operations.push(Operation::new(
@@ -37,7 +36,7 @@ pub fn apply_watermark(document: &mut Document, image: Image, left: f32, top: f3
         ));
 
         content.operations.push(Operation::new("Q", vec![]));
-        
+
         document.change_page_content(page_id, content.encode()?)?;
     }
 

@@ -34,9 +34,9 @@ pub struct SimpleIppDocument {
 pub struct PrinterInfo {
     #[builder(default = r#""IppServer".to_string()"#)]
     pub name: String,
-    #[builder(default = r#"Some("IppServer by ippper".to_string())"#)]
+    #[builder(default = r#"Some("PDF Print Server".to_string())"#)]
     pub info: Option<String>,
-    #[builder(default = r#"Some("IppServer by ippper".to_string())"#)]
+    #[builder(default = r#"Some("PDF Print Server".to_string())"#)]
     pub make_and_model: Option<String>,
     #[builder(default = r#"None"#)]
     pub uuid: Option<Uuid>,
@@ -52,11 +52,11 @@ pub struct SimpleIppService<T: SimpleIppServiceHandler> {
     handler: T,
 }
 impl<T: SimpleIppServiceHandler> SimpleIppService<T> {
-    pub fn new(handler: T) -> Self {
+    pub fn new(host: String, handler: T) -> Self {
         Self {
             start_time: Instant::now(),
             job_id: AtomicI32::new(1000),
-            host: "defaulthost:631".to_string(),
+            host,
             info: PrinterInfoBuilder::default().build().unwrap(),
             handler,
             default_document_format: "application/pdf".to_string(),
@@ -299,7 +299,7 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
                 IppValue::MimeMediaType(x) => Some(x.clone()),
                 _ => None,
             });
-            
+
         let compression = req
             .attributes()
             .groups_of(DelimiterTag::OperationAttributes)
@@ -324,27 +324,12 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
             }
         }
         eprintln!("Received job {}", req_id);
-        let result = match compression {
-            None => {
-                self.handler.handle_document(
-                    SimpleIppDocument{
-                        format, 
-                        payload: req.into_payload()
-                    },
-                    remote_addr
-                ).await
-            }
+        let payload = match compression {
+            None => req.into_payload(),
             Some("gzip") => {
                 let raw_payload = req.into_payload();
                 let decoder = bufread::GzipDecoder::new(futures::io::BufReader::new(raw_payload));
-                let payload = IppPayload::new_async(decoder);
-                self.handler.handle_document(
-                    SimpleIppDocument{
-                        format, 
-                        payload
-                    },
-                    remote_addr
-                ).await
+                IppPayload::new_async(decoder)
             }
             _ => {
                 return Err(IppError {
@@ -355,17 +340,24 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
             }
         };
 
-        let mut resp = match result {
-            Ok(_) => IppRequestResponse::new_response(version, StatusCode::SuccessfulOk, req_id),
-            Err(e) => {
-                eprintln!("Job {} failed: {:?}", req_id, e);
-                return Err(IppError {
-                    code: StatusCode::ServerErrorInternalError,
-                    msg: format!("Print failed: {:?}", e)
-                }
-                .into())
+        let result = self.handler.handle_document(
+                    SimpleIppDocument{
+                        format,
+                        payload
+                    },
+                    remote_addr
+                ).await;
+
+        if let Err(e) = result {
+            eprintln!("Job {} failed: {:?}", req_id, e);
+            return Err(IppError {
+                code: StatusCode::ServerErrorInternalError,
+                msg: format!("Print failed: {:?}", e)
             }
-        };
+            .into())
+        }
+
+        let mut resp = IppRequestResponse::new_response(version, StatusCode::SuccessfulOk, req_id);
 
         self.add_basic_attributes(&mut resp);
         resp.attributes_mut().add(
