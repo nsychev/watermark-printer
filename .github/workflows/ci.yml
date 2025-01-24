@@ -1,10 +1,38 @@
-name: Release
+name: Build and release
 on: [push, pull_request]
 env:
   GITHUB_TOKEN: ${{ github.token }}
 jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Lint
+        run: cargo clippy -- -D warnings
+
   release-matrix:
-    name: Build release for ${{ matrix.platform.os-name }}
+    name: Build for ${{ matrix.platform.os-name }}
     runs-on: ${{ matrix.platform.runs-on }}
     strategy:
       fail-fast: false

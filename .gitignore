@@ -1,6 +1,5 @@
 /target
 /pdfs/
-Cargo.lock
 .DS_Store
 *.pdf
 source.bin
