@@ -1,11 +1,17 @@
+use crate::drawer::Image;
+use crate::image_xobject::ImageXObject;
 use lopdf::content::Operation;
 use lopdf::Document;
 use lopdf::Object::Name;
-use crate::drawer::Image;
-use crate::image_xobject::ImageXObject;
 
-pub fn apply_watermark(document: &mut Document, image: Image, left: f32, top: f32) -> anyhow::Result<()> {
-    let (mut image_xobject, mask_xobject) = ImageXObject::try_from(image.width, image.height, image.data)?;
+pub fn apply_watermark(
+    document: &mut Document,
+    image: Image,
+    left: f32,
+    top: f32,
+) -> anyhow::Result<()> {
+    let (mut image_xobject, mask_xobject) =
+        ImageXObject::try_from(image.width, image.height, image.data)?;
 
     let mask_id = document.add_object(mask_xobject);
     image_xobject.s_mask = Some(mask_id);
@@ -27,12 +33,12 @@ pub fn apply_watermark(document: &mut Document, image: Image, left: f32, top: f3
                 0i32.into(),
                 (image.height as f32).into(),
                 left.into(),
-                top.into()
-            ]
+                top.into(),
+            ],
         ));
         content.operations.push(Operation::new(
             "Do",
-            vec![Name(xobject_id.as_bytes().to_vec())]
+            vec![Name(xobject_id.as_bytes().to_vec())],
         ));
 
         content.operations.push(Operation::new("Q", vec![]));

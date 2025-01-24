@@ -16,18 +16,14 @@ pub struct ImageXObject {
 }
 
 impl ImageXObject {
-    pub fn try_from(
-        width: u32,
-        height: u32,
-        image_data: Vec<u8>,
-    ) -> Result<(Self, Self), Error> {
+    pub fn try_from(width: u32, height: u32, image_data: Vec<u8>) -> Result<(Self, Self), Error> {
         let image_color_data = Self::rgba_to_rgb(&image_data);
         let alpha_data = Self::rgba_to_a(&image_data);
 
         Ok((
             Self {
-                width: width,
-                height: height,
+                width,
+                height,
                 color_space: ColorType::Rgb,
                 bits_per_component: BitDepth::Eight,
                 image_data: image_color_data,
@@ -35,8 +31,8 @@ impl ImageXObject {
                 s_mask: None, // This should be filled in later
             },
             Self {
-                width: width,
-                height: height,
+                width,
+                height,
                 color_space: ColorType::Grayscale,
                 bits_per_component: BitDepth::Eight,
                 image_data: alpha_data,
@@ -106,7 +102,13 @@ impl From<ImageXObject> for lopdf::Stream {
             ColorType::Rgba | ColorType::GrayscaleAlpha => "DeviceN",
         };
 
-        let bbox: lopdf::Object = Array([1.0, 0.0, 0.0, 1.0, 0.0, 0.0].iter().copied().map(Real).collect());
+        let bbox: lopdf::Object = Array(
+            [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+                .iter()
+                .copied()
+                .map(Real)
+                .collect(),
+        );
 
         let mut dict = lopdf::Dictionary::from_iter(vec![
             ("Type", Name("XObject".as_bytes().to_vec())),

@@ -28,7 +28,10 @@ pub fn extract_content(data: &[u8]) -> Result<Vec<u8>, PjlError> {
         }
 
         // Check for end sequence within the chunk
-        if let Some(pos) = chunk.windows(PJL_MAGIC.len()).position(|window| window == PJL_MAGIC) {
+        if let Some(pos) = chunk
+            .windows(PJL_MAGIC.len())
+            .position(|window| window == PJL_MAGIC)
+        {
             content.extend_from_slice(&chunk[..pos]);
             break;
         }

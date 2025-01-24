@@ -27,7 +27,7 @@ pub trait SimpleIppServiceHandler: Send + Sync + 'static {
 
 pub struct SimpleIppDocument {
     pub format: Option<String>,
-    pub payload: IppPayload
+    pub payload: IppPayload,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -340,21 +340,18 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
             }
         };
 
-        let result = self.handler.handle_document(
-                    SimpleIppDocument{
-                        format,
-                        payload
-                    },
-                    remote_addr
-                ).await;
+        let result = self
+            .handler
+            .handle_document(SimpleIppDocument { format, payload }, remote_addr)
+            .await;
 
         if let Err(e) = result {
             eprintln!("Job {} failed: {:?}", req_id, e);
             return Err(IppError {
                 code: StatusCode::ServerErrorInternalError,
-                msg: format!("Print failed: {:?}", e)
+                msg: format!("Print failed: {:?}", e),
             }
-            .into())
+            .into());
         }
 
         let mut resp = IppRequestResponse::new_response(version, StatusCode::SuccessfulOk, req_id);

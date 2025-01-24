@@ -1,5 +1,5 @@
-use thiserror::Error;
 use ipp::model::StatusCode;
+use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
 #[error("{code} {msg:?}")]
@@ -10,7 +10,7 @@ pub struct IppError {
 
 #[derive(Error, Debug)]
 pub struct Error {
-    pub msg: String
+    pub msg: String,
 }
 
 impl std::fmt::Display for Error {

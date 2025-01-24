@@ -27,7 +27,11 @@ pub struct PrintJobHandler {
 }
 
 impl PrintJobHandler {
-    pub fn new(storage_path: String, team_id_script: Option<String>, next_ipp: Uri) -> anyhow::Result<Self> {
+    pub fn new(
+        storage_path: String,
+        team_id_script: Option<String>,
+        next_ipp: Uri,
+    ) -> anyhow::Result<Self> {
         let lua = Lua::new();
 
         lua.load(match team_id_script {

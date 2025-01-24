@@ -126,7 +126,11 @@ pub trait IppServerHandler: Send + Sync + 'static {
         resp
     }
 
-    async fn handle_request(&self, req: IppRequestResponse, remote_addr: &SocketAddr) -> IppRequestResponse {
+    async fn handle_request(
+        &self,
+        req: IppRequestResponse,
+        remote_addr: &SocketAddr,
+    ) -> IppRequestResponse {
         let req_id = req.header().request_id;
         if !self.check_version(&req) {
             return self.build_error_response(
@@ -178,10 +182,9 @@ impl IppServer {
         addr: SocketAddr,
         handler: Arc<impl IppServerHandler>,
     ) -> std::result::Result<(), hyper::Error> {
-        let addr = addr;
         let make_svc = make_service_fn(move |conn: &AddrStream| {
             let handler = handler.clone();
-            let remote_addr: SocketAddr = conn.remote_addr().clone();
+            let remote_addr: SocketAddr = conn.remote_addr();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
                     let handler = handler.clone();
@@ -197,7 +200,7 @@ impl IppServer {
     async fn handle(
         req: Request<Body>,
         handler: Arc<impl IppServerHandler>,
-        remote_addr: SocketAddr
+        remote_addr: SocketAddr,
     ) -> Result<Response<Body>, anyhow::Error> {
         if req.method() == Method::GET {
             return match req.uri().path() {
