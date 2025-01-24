@@ -6,7 +6,7 @@ Tested on Windows 10, 11 and Linux (CUPS) clients.
 
 ## Build
 
-You need latest stable [Rust](https://www.rust-lang.org/). Run `cargo build -r` and fetch the binary at `target/release/watermark-printer`. It's ready!
+You need the latest stable [Rust](https://www.rust-lang.org/). Run `cargo build -r` and fetch the binary at `target/release/watermark-printer`. It's ready!
 
 ## Run
 
@@ -22,19 +22,19 @@ Options:
   -I, --next-ipp <NEXT_IPP>              Next printer IPP URL
 ```
 
-## I don't know anything about printers, how to set everything up?
+## I don't know anything about printers, how do I set everything up?
 
-1. You need the print server — any machine that is available to your clients and capable of running this utility.
+1. You need the print server — any machine available to your clients capable of running this utility.
 
-2. You need either:
+2. Either you need:
 
-   a. a printer that can print via IPP — in that case you need to turn on IPP in the printer settings and get URL.
+   a. a printer that can print via IPP — in that case you need to turn on IPP in the printer settings and get the URL;
 
-      > It's recommended to set static IP to such printer to avoid issues when IP address changes.
+      > It's recommended to set static IP to your printer to avoid issues when the IP address changes.
   
-   b. Linux and CUPS set up on your print server, and printer connected to your computer. In that case, your URL will be `http://localhost:631/printers/<printer-name>`.
+   b. or your print server must be a Linux machine running CUPS, and the printer should be connected to this server. In that case, your URL will be `http://localhost:631/printers/<printer-name>`.
 
-3. If you use CUPS, **ensure that you have turned firewall on and it is blocking outside connections to CUPS**.
+3. If you use CUPS, **ensure that you have turned the firewall on and it is blocking outside connections to CUPS**.
 
    Firstly, there were vulnerabilities in CUPS that even allowed remote code execution on your server; and secondly, anyone will be able to print without watermarks.
 
@@ -49,7 +49,7 @@ Options:
    sudo ufw enable
    ```
 
-   If you print directly to printer via IPP, ensure that your clients don't have direct network access to that printer.
+   If you print directly to the printer via IPP, ensure that your clients don't have direct network access to that printer.
 
 4. Run our tool:
 
@@ -57,11 +57,11 @@ Options:
    ./watermark-printer -p 6631 -I <your-url>
    ```
 
-5. Add new printer to your clients. Use URL `ipp://<your-ip>:6631/` on Linux, and `http://<your-ip>:631/` on Windows.
+5. Add new printer to your clients. Use URL `ipp://<your-ip>:6631/` on Linux, and `http://<your-ip>:6631/` on Windows.
 
-   On Linux you should choose **Select printer from database** → **Generic** → **PDF** → **Generic PDF Printer [en]** when asked for printer model.
+   On Linux, you should choose **Select printer from database** → **Generic** → **PDF** → **Generic PDF Printer [en]** when asked for the printer model.
 
-6. Print test page and see it with the watermark!
+6. Print the test page and see it with the watermark!
 
 ### Bonus: Round Robin
 
@@ -71,32 +71,32 @@ Open `http://localhost:631` on your print server. Go to **Administration** and c
 
 Authenticate with your current UNIX username and password.
 
-Set some name (for example, `round-robin-class`) and choose a few printers.
+Set the name (for example, `round-robin-class`) and choose a few printers.
 
 Then use `http://localhost:631/classes/<class-name>` as `-I` argument. Jobs will be distributed equally between included printers.
 
 ## Watermark customization
 
-By default, the tool supports only IPv4 addresses and takes the third octet for watermark, filling it up to 3 digits with zeroes. For example, job that came from 10.21.32.43 will have watermark “032”.
+By default, the tool supports only IPv4 addresses and takes the third octet for the watermark, filling it up to 3 digits with zeroes. For example, a job that came from 10.21.32.43 will have a watermark “032”.
 
-To customize it, create a Lua script containing just a single function `get_team_id`. It should accept source IP address as a string and return either string — the watermark content — or `nil`. Be aware that the address might be an IPv6 and process that correctly.
+To customize it, create a Lua script containing just a single function `get_team_id`. It should accept the source IP address as a string and return either string — the watermark content — or `nil`. Be aware that the address might be an IPv6 and process this case correctly.
 
-Pass path to this script as `--team-id-script`.
+Pass the path to this script as `--team-id-script`.
 
 You can find the built-in script described earlier at [`handler.rs:39`](src/handler.rs#L39).
 
-If the script returns `nil`, the job will not be printed at all.
+If the script returns `nil`, the job will be skipped.
 
 ## Known issues
 
-1. By some unknown reason, Linux and Windows treat the printer differently — one of them sends “mirrored” PDF files so that watermarks become mirrored.
+1. For some unknown reason, Linux and Windows treat the printer differently — one of them sends “mirrored” PDF files so that watermarks become mirrored.
 
    If you get this weird behaviour, the only way to fix it now is to change [`src/drawer.rs`](src/drawer.rs#L32) to comment or uncomment `Projection::scale(1.0, -1.0)` part and recompile the binary.
 
-   We hope you have identical machines so you get either one or another behaviour on all of them.
+   We hope you have identical machines so you get one or another behaviour on all of them.
 
-2. Watermark text is colored `#808080C0`, so if contestant prints something gray, digits may be indistinguishable.
+2. Watermark text is coloured `#808080C0`, so if the client prints something grey, digits may be indistinguishable.
 
-3. Initially I implemented native printing (using `libcups` on Linux / `winspool` on Windows), but when we tried to build it at NEF, it failed due to [bug in the the third-party Rust printing library](https://github.com/talesluna/rust-printers/issues/28), so I replaced it with printing via IPP.
+3. Initially, I implemented native printing (using `libcups` on Linux / `winspool` on Windows), but when we tried to build it at NEF, it failed due to [a bug in the third-party Rust printing library](https://github.com/talesluna/rust-printers/issues/28), so I replaced it with printing via IPP.
 
    The bug seems to be fixed since, so maybe it's time to turn back. If your printer doesn't speak IPP and you can't use CUPS, create an issue.
