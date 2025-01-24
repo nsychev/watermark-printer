@@ -70,4 +70,4 @@ jobs:
           extra-files: |
             README.md
             LICENSE.md
-          changes-file: ""
+          changes-file: "CHANGELOG.md"
