@@ -3,7 +3,8 @@ on: [push, pull_request]
 env:
   GITHUB_TOKEN: ${{ github.token }}
 jobs:
-  build-and-lint:
+  lint:
+    name: Lint using rustfmt and clippy
     runs-on: ubuntu-latest
 
     steps:
@@ -66,3 +67,6 @@ jobs:
         with:
           executable-name: watermark-printer
           target: ${{ matrix.platform.target }}
+          extra-files: |
+            README.md
+            LICENSE.md

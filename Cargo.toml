@@ -29,3 +29,6 @@ thiserror = "1.0"
 tokio = {version = "1", features = ["rt-multi-thread", "macros"], default-features = false}
 tokio-util = {version = "0.7", features = ["io", "compat"], default-features = false}
 uuid = { version = "1", features = ["v3", "v4"] }
+
+[target.x86_64-unknown-linux-musl.dependencies]
+openssl = { version = "*", features = ["vendored"] }
