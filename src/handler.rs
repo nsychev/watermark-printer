@@ -1,18 +1,19 @@
+use async_trait::async_trait;
+use futures::AsyncReadExt;
 use ipp::model::StatusCode;
 use ipp::prelude::{AsyncIppClient, IppOperationBuilder, IppPayload, Uri};
 use lopdf::Document;
-use async_trait::async_trait;
-use futures::AsyncReadExt;
+use mlua::{Function, Lua};
+use std::net::SocketAddr;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio_util::compat::TokioAsyncReadCompatExt;
-use std::net::SocketAddr;
 
 use crate::drawer::WatermarkFactory;
+use crate::error::IppError;
 use crate::pjl::{extract_content, PjlError};
 use crate::service::{SimpleIppDocument, SimpleIppServiceHandler};
 use crate::watermark::apply_watermark;
-use crate::error::IppError;
 
 use std::path::PathBuf;
 
@@ -20,28 +21,64 @@ pub struct PrintJobHandler {
     storage: PathBuf,
     watermark_factory: WatermarkFactory,
     next_ipp_uri: Uri,
-    next_ipp_client: AsyncIppClient
+    next_ipp_client: AsyncIppClient,
+    _lua: Lua, // extends lua lifetime
+    get_team_id: Function,
 }
 
 impl PrintJobHandler {
-    pub fn new(storage_path: String, next_ipp: Uri) -> Self {
-        Self {
+    pub fn new(storage_path: String, team_id_script: Option<String>, next_ipp: Uri) -> anyhow::Result<Self> {
+        let lua = Lua::new();
+
+        lua.load(match team_id_script {
+            Some(script) => std::fs::read_to_string(script).unwrap(),
+            None => r#"
+                    function get_team_id(ip_address)
+                        local parts = {}
+                        for num in ip_address:gmatch("%d+") do
+                            table.insert(parts, tonumber(num))
+                        end
+                        if #parts == 4 then
+                            return string.format("%03d", parts[3])
+                        end
+                        return "123"
+                    end
+                "#
+            .to_string(),
+        })
+        .exec()?;
+
+        let get_team_id: Function = lua.globals().get("get_team_id")?;
+
+        Ok(Self {
             storage: PathBuf::from(storage_path),
             watermark_factory: WatermarkFactory::new(),
             next_ipp_uri: next_ipp.clone(),
-            next_ipp_client: AsyncIppClient::new(next_ipp)
-        }
+            next_ipp_client: AsyncIppClient::new(next_ipp),
+            _lua: lua,
+            get_team_id,
+        })
     }
 }
 
 #[async_trait]
 impl SimpleIppServiceHandler for PrintJobHandler {
-    async fn handle_document(&self, mut ipp_document: SimpleIppDocument, remote_addr: &SocketAddr) -> anyhow::Result<()> {
-        let team_id = match remote_addr {
-            SocketAddr::V4(addr) => addr.ip().octets()[2],
-            SocketAddr::V6(..) => {
-                eprintln!("Job came from IPv6 client, skipped");
-                return Ok(())
+    async fn handle_document(
+        &self,
+        mut ipp_document: SimpleIppDocument,
+        remote_addr: &SocketAddr,
+    ) -> anyhow::Result<()> {
+        let team_id = match self
+            .get_team_id
+            .call::<Option<String>>(remote_addr.ip().to_string())?
+        {
+            Some(team_id) => team_id,
+            None => {
+                eprintln!(
+                    "Unknown origin machine {}, skipping the job",
+                    remote_addr.ip()
+                );
+                return Ok(());
             }
         };
 
@@ -73,7 +110,7 @@ impl SimpleIppServiceHandler for PrintJobHandler {
 
         let mut document = Document::load_mem(&content)?;
 
-        let watermark = self.watermark_factory.draw(format!("{:0>3}", team_id), 595, 595);
+        let watermark = self.watermark_factory.draw(team_id, 595, 595);
         apply_watermark(&mut document, watermark, 0.0, 100.0)?;
 
         let pdf_path = addr_dir.join(format!("{}.pdf", filename));
@@ -82,8 +119,8 @@ impl SimpleIppServiceHandler for PrintJobHandler {
         let payload = IppPayload::new_async(File::open(&pdf_path).await?.compat());
 
         let operation = IppOperationBuilder::print_job(self.next_ipp_uri.clone(), payload)
-        .job_title(filename)
-        .build();
+            .job_title(filename)
+            .build();
 
         if let Err(err) = self.next_ipp_client.send(operation).await {
             eprintln!("Failed to send job to next printer: {}", err);

@@ -1,30 +1,31 @@
 [package]
-name = "nercprint"
-authors = ["ArcticLampyrid <ArcticLampyrid@outlook.com>", "Nikita Sychev <root@nsychev.ru>"]
+name = "watermark-printer"
+authors = ["Nikita Sychev <root@nsychev.ru>"]
 edition = "2021"
-license = "BSD-3-Clause"
-version = "0.3.0"
+license = "MIT"
+version = "1.0.0"
 
 [dependencies]
+ab_glyph = "0.2"
 anyhow = "1"
 async-compression = {version = "0.4", features = ["futures-io", "gzip"], default-features = false}
 async-trait = "0.1"
+chrono = "0.4.39"
+clap = { version = "4.5.23", features = ["derive"] }
 derive_builder = "0.12"
 futures = "0.3"
+hostname = "0.4.0"
 hyper = {version = "0.14", features = ["http1", "server", "stream", "tcp"], default-features = false}
+image = "0.25"
+imageproc = "0.25"
+ipp = "5"
+lopdf = { version = "0.34", features = ["chrono_time", "nom_parser"], default-features = false }
+mlua = { version = "0.10.2", features = ["lua54", "send", "vendored"] }
 num-traits = "0.2"
+png = "0.17"
+scopeguard = "1.2.0"
+tempfile = "3.14.0"
 thiserror = "1.0"
 tokio = {version = "1", features = ["rt-multi-thread", "macros"], default-features = false}
 tokio-util = {version = "0.7", features = ["io", "compat"], default-features = false}
 uuid = { version = "1", features = ["v3", "v4"] }
-lopdf = { version = "0.34", features = ["chrono_time", "nom_parser"], default-features = false }
-png = "0.17"
-imageproc = "0.25"
-image = "0.25"
-ipp = "5"
-ab_glyph = "0.2"
-clap = { version = "4.5.23", features = ["derive"] }
-hostname = "0.4.0"
-tempfile = "3.14.0"
-scopeguard = "1.2.0"
-chrono = "0.4.39"

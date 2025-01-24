@@ -27,7 +27,7 @@ impl WatermarkFactory {
 
         let size = text_size(self.scale, &self.font, &text);
 
-        draw_text_mut(&mut image, Rgba([0u8, 0u8, 0u8, 64u8]), (width - size.0) as i32 / 2, (height - size.1) as i32 / 2, self.scale, &self.font, &text);
+        draw_text_mut(&mut image, Rgba([128u8, 128u8, 128u8, 192u8]), (width - size.0) as i32 / 2, (height - size.1) as i32 / 2, self.scale, &self.font, &text);
 
         let projection = Projection::translate(0.5 * width as f32, 0.5 * height as f32) * /*Projection::scale(1.0, -1.0) * */ Projection::rotate(-0.45) * Projection::translate(-0.5 * width as f32, -0.5 * height as f32);
 
