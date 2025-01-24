@@ -45,7 +45,7 @@ impl PrintJobHandler {
                         if #parts == 4 then
                             return string.format("%03d", parts[3])
                         end
-                        return "123"
+                        return nil
                     end
                 "#
             .to_string(),
