@@ -99,4 +99,4 @@ If the script returns `nil`, the job will not be printed at all.
 
 3. Initially I implemented native printing (using `libcups` on Linux / `winspool` on Windows), but when we tried to build it at NEF, it failed due to [bug in the the third-party Rust printing library](https://github.com/talesluna/rust-printers/issues/28), so I replaced it with printing via IPP.
 
-  The bug seems to be fixed since, so maybe it's time to turn back. If your printer doesn't speak IPP and you can't use CUPS, create an issue.
+   The bug seems to be fixed since, so maybe it's time to turn back. If your printer doesn't speak IPP and you can't use CUPS, create an issue.
