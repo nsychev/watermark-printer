@@ -216,7 +216,7 @@ impl IppServer {
         }
         let reader = req
             .into_body()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+            .map_err(|e| io::Error::other(e.to_string()))
             .into_async_read();
         let ipp_request = AsyncIppParser::new(reader).parse().await?;
         let response = handler.handle_request(ipp_request, &remote_addr).await;
