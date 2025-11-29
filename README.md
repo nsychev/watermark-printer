@@ -20,6 +20,7 @@ Options:
   -s, --storage <STORAGE>                Path to store all PDFs [default: /tmp/printouts]
   -t, --team-id-script <TEAM_ID_SCRIPT>  Path to Lua script with custom `get_team_id' function
   -I, --next-ipp <NEXT_IPP>              Next printer IPP URL
+  -M, --mirror                           Mirror the watermark
 ```
 
 ## I don't know anything about printers, how do I set everything up?
@@ -91,9 +92,9 @@ If the script returns `nil`, the job will be skipped.
 
 1. For some unknown reason, Linux and Windows treat the printer differently — one of them sends “mirrored” PDF files so that watermarks become mirrored.
 
-   If you get this weird behaviour, the only way to fix it now is to change [`src/drawer.rs`](src/drawer.rs#L32) to comment or uncomment `Projection::scale(1.0, -1.0)` part and recompile the binary.
+   If you get this weird behaviour, try `-M` flag.
 
-   We hope you have identical machines so you get one or another behaviour on all of them.
+   We hope you have identical machines so one or another way will work at all of them.
 
 2. Watermark text is coloured `#808080C0`, so if the client prints something grey, digits may be indistinguishable.
 
