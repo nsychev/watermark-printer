@@ -1,9 +1,9 @@
 [package]
 name = "watermark-printer"
 authors = ["Nikita Sychev <root@nsychev.ru>"]
-edition = "2021"
+edition = "2024"
 license = "MIT"
-version = "1.0.0"
+version = "1.1.0"
 
 [dependencies]
 ab_glyph = "0.2"
