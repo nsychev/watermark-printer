@@ -1,8 +1,8 @@
 use crate::drawer::Image;
 use crate::image_xobject::ImageXObject;
-use lopdf::content::Operation;
 use lopdf::Document;
 use lopdf::Object::Name;
+use lopdf::content::Operation;
 
 pub fn apply_watermark(
     document: &mut Document,

@@ -11,7 +11,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::drawer::WatermarkFactory;
 use crate::error::IppError;
-use crate::pjl::{extract_content, PjlError};
+use crate::pjl::{PjlError, extract_content};
 use crate::service::{SimpleIppDocument, SimpleIppServiceHandler};
 use crate::watermark::apply_watermark;
 

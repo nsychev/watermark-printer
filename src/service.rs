@@ -314,15 +314,16 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
             });
         let req_id = req.header().request_id;
         let version = req.header().version;
-        if let Some(ref x) = format {
-            if !self.supported_document_formats.contains(x) {
-                return Err(IppError {
-                    code: StatusCode::ClientErrorDocumentFormatNotSupported,
-                    msg: StatusCode::ClientErrorDocumentFormatNotSupported.to_string(),
-                }
-                .into());
+        if let Some(ref x) = format
+            && !self.supported_document_formats.contains(x)
+        {
+            return Err(IppError {
+                code: StatusCode::ClientErrorDocumentFormatNotSupported,
+                msg: StatusCode::ClientErrorDocumentFormatNotSupported.to_string(),
             }
+            .into());
         }
+
         eprintln!("Received job {}", req_id);
         let payload = match compression {
             None => req.into_payload(),
@@ -336,7 +337,7 @@ impl<T: SimpleIppServiceHandler> IppServerHandler for SimpleIppService<T> {
                     code: StatusCode::ClientErrorCompressionNotSupported,
                     msg: StatusCode::ClientErrorCompressionNotSupported.to_string(),
                 }
-                .into())
+                .into());
             }
         };
 

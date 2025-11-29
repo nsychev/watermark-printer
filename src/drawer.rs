@@ -1,7 +1,7 @@
 use ab_glyph::FontRef;
 use image::{ImageBuffer, Rgba};
 use imageproc::drawing::{draw_text_mut, text_size};
-use imageproc::geometric_transformations::{warp, Interpolation, Projection};
+use imageproc::geometric_transformations::{Interpolation, Projection, warp};
 
 pub struct WatermarkFactory {
     font: FontRef<'static>,
