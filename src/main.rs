@@ -28,6 +28,8 @@ struct Args {
     team_id_script: Option<String>,
     #[arg(short = 'I', long, help = "Next printer IPP URL")]
     next_ipp: Uri,
+    #[arg(short = 'M', long, help = "Mirror the watermark")]
+    mirror: bool,
 }
 
 #[tokio::main]
@@ -41,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_default();
     let displayed_addr = format!("{}:{}", hostname, 631);
 
-    let ipp_handler = PrintJobHandler::new(args.storage, args.team_id_script, args.next_ipp)?;
+    let ipp_handler = PrintJobHandler::new(args.storage, args.team_id_script, args.next_ipp, args.mirror)?;
     let mut ipp_service = SimpleIppService::new(displayed_addr, ipp_handler);
 
     ipp_service.set_info(

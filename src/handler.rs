@@ -17,6 +17,8 @@ use crate::watermark::apply_watermark;
 
 use std::path::PathBuf;
 
+static DEFAULT_TEAM_ID_SCRIPT: &str = include_str!("default_team_id_script.lua");
+
 pub struct PrintJobHandler {
     storage: PathBuf,
     watermark_factory: WatermarkFactory,
@@ -31,24 +33,13 @@ impl PrintJobHandler {
         storage_path: String,
         team_id_script: Option<String>,
         next_ipp: Uri,
+        mirror_watermark: bool,
     ) -> anyhow::Result<Self> {
         let lua = Lua::new();
 
         lua.load(match team_id_script {
             Some(script) => std::fs::read_to_string(script).unwrap(),
-            None => r#"
-                    function get_team_id(ip_address)
-                        local parts = {}
-                        for num in ip_address:gmatch("%d+") do
-                            table.insert(parts, tonumber(num))
-                        end
-                        if #parts == 4 then
-                            return string.format("%03d", parts[3])
-                        end
-                        return nil
-                    end
-                "#
-            .to_string(),
+            None => DEFAULT_TEAM_ID_SCRIPT.to_string(),
         })
         .exec()?;
 
@@ -56,7 +47,7 @@ impl PrintJobHandler {
 
         Ok(Self {
             storage: PathBuf::from(storage_path),
-            watermark_factory: WatermarkFactory::new(),
+            watermark_factory: WatermarkFactory::new(mirror_watermark),
             next_ipp_uri: next_ipp.clone(),
             next_ipp_client: AsyncIppClient::new(next_ipp),
             _lua: lua,

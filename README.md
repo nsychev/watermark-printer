@@ -83,7 +83,7 @@ To customize it, create a Lua script containing just a single function `get_team
 
 Pass the path to this script as `--team-id-script`.
 
-You can find the built-in script described earlier at [`handler.rs:39`](src/handler.rs#L39).
+You can find the built-in script described earlier at [`default_team_id_script.lua`](src/default_team_id_script.lua).
 
 If the script returns `nil`, the job will be skipped.
 
