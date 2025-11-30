@@ -144,8 +144,8 @@ pub trait IppServerHandler: Send + Sync + 'static {
             );
         }
         let version = req.header().version;
-        println!("Request: {:?}", req.header());
-        let response = match Operation::from_u16(req.header().operation_or_status) {
+
+        match Operation::from_u16(req.header().operation_or_status) {
             Some(op) => match op {
                 Operation::PrintJob => self.print_job(req, remote_addr).await,
                 Operation::PrintUri => self.print_uri(req).await,
@@ -167,11 +167,7 @@ pub trait IppServerHandler: Send + Sync + 'static {
             },
             None => Err(operation_not_supported()),
         }
-        .unwrap_or_else(|error| self.build_error_response(version, req_id, error));
-
-        println!("Response: {:?}", response.header());
-
-        response
+        .unwrap_or_else(|error| self.build_error_response(version, req_id, error))
     }
 }
 

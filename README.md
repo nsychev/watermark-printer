@@ -39,9 +39,11 @@ Options:
    Firstly, there were vulnerabilities in CUPS that even allowed remote code execution on your server; and secondly, anyone will be able to print without watermarks.
 
    ```bash
+   sudo cupsctl --no-remote-admin --no-remote-any
+
    # If you use iptables
-   sudo iptables -A INPUT -p tcp --dport 631 -j REJECT
-   sudo iptables -A INPUT -p udp --dport 631 -j REJECT
+   sudo iptables -A INPUT -s ! 127.0.0.1 -p tcp --dport 631 -j REJECT
+   sudo iptables -A INPUT -s ! 127.0.0.1 -p udp --dport 631 -j REJECT
    sudo iptables-save | sudo tee /etc/iptables/rules.v4 # you need iptables-persistent package on your machine to make rules survive reboots
 
    # If you use UFW

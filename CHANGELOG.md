@@ -1,3 +1,8 @@
+# 1.2.0 - 2025-11-30
+
+- Support automatic detection of mirrored PDF files
+- Support custom bind address
+
 # 1.1.0 - 2025-11-29
 
 - Update vulnerable dependencies and Rust to 2024 edition
