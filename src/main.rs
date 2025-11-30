@@ -11,8 +11,13 @@ use watermark_printer::service::{PrinterInfoBuilder, SimpleIppService};
 struct Args {
     #[arg(short, long, help = "Printer name", default_value = "PDF-Printer")]
     name: String,
-    #[arg(short, long, default_value = "631", help = "Port to listen on")]
-    port: u16,
+    #[arg(
+        short = 'p',
+        long,
+        default_value = "631",
+        help = "Address or port to bind (e.g. 0.0.0.0:631, [::1]:631 or 631)"
+    )]
+    bind: String,
     #[arg(
         short,
         long,
@@ -30,16 +35,31 @@ struct Args {
     next_ipp: Uri,
 }
 
+fn parse_bind_address(bind: &str) -> anyhow::Result<SocketAddr> {
+    if let Ok(addr) = bind.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+
+    if let Ok(port) = bind.parse::<u16>() {
+        return Ok(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port));
+    }
+
+    anyhow::bail!(
+        "Invalid bind address: '{}'. Expected format: 'address:port' or just 'port'",
+        bind
+    )
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), args.port);
+    let addr = parse_bind_address(&args.bind)?;
 
     let hostname = hostname::get()
-        .unwrap_or_default()
-        .into_string()
-        .unwrap_or_default();
-    let displayed_addr = format!("{}:{}", hostname, 631);
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| addr.ip().to_string());
+    let displayed_addr = format!("{}:{}", hostname, addr.port());
 
     let ipp_handler = PrintJobHandler::new(args.storage, args.team_id_script, args.next_ipp)?;
     let mut ipp_service = SimpleIppService::new(displayed_addr, ipp_handler);
@@ -55,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap(),
     );
 
-    println!("Listening on port {}", args.port);
+    println!("Listening on {}", addr);
     if let Err(e) = IppServer::serve(addr, Arc::new(ipp_service)).await {
         eprintln!("Server error: {}", e);
     }
