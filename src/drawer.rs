@@ -6,7 +6,6 @@ use imageproc::geometric_transformations::{Interpolation, Projection, warp};
 pub struct WatermarkFactory {
     font: FontRef<'static>,
     scale: f32,
-    mirror: bool,
 }
 
 pub struct Image {
@@ -17,21 +16,20 @@ pub struct Image {
 
 impl Default for WatermarkFactory {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 
 impl WatermarkFactory {
-    pub fn new(mirror_watermark: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             font: FontRef::try_from_slice(include_bytes!("../resources/Inter-Black.ttf") as &[u8])
                 .unwrap(),
             scale: 256.0,
-            mirror: mirror_watermark,
         }
     }
 
-    pub fn draw(&self, text: String, width: u32, height: u32) -> Image {
+    pub fn draw(&self, text: String, width: u32, height: u32, mirror: bool) -> Image {
         let mut image = ImageBuffer::new(width, height);
 
         let size = text_size(self.scale, &self.font, &text);
@@ -48,7 +46,7 @@ impl WatermarkFactory {
 
         let mut projection = Projection::translate(0.5 * width as f32, 0.5 * height as f32);
 
-        if self.mirror {
+        if mirror {
             projection = projection * Projection::scale(1.0, -1.0);
         }
 

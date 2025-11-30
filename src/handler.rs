@@ -11,6 +11,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::drawer::WatermarkFactory;
 use crate::error::IppError;
+use crate::image_xobject::has_flipped_coordinates;
 use crate::pjl::{PjlError, extract_content};
 use crate::service::{SimpleIppDocument, SimpleIppServiceHandler};
 use crate::watermark::apply_watermark;
@@ -33,7 +34,6 @@ impl PrintJobHandler {
         storage_path: String,
         team_id_script: Option<String>,
         next_ipp: Uri,
-        mirror_watermark: bool,
     ) -> anyhow::Result<Self> {
         let lua = Lua::new();
 
@@ -47,7 +47,7 @@ impl PrintJobHandler {
 
         Ok(Self {
             storage: PathBuf::from(storage_path),
-            watermark_factory: WatermarkFactory::new(mirror_watermark),
+            watermark_factory: WatermarkFactory::new(),
             next_ipp_uri: next_ipp.clone(),
             next_ipp_client: AsyncIppClient::new(next_ipp),
             _lua: lua,
@@ -105,7 +105,9 @@ impl SimpleIppServiceHandler for PrintJobHandler {
 
         let mut document = Document::load_mem(&content)?;
 
-        let watermark = self.watermark_factory.draw(team_id, 595, 595);
+        let watermark =
+            self.watermark_factory
+                .draw(team_id, 595, 595, has_flipped_coordinates(&document));
         apply_watermark(&mut document, watermark, 0.0, 100.0)?;
 
         let pdf_path = addr_dir.join(format!("{}.pdf", filename));

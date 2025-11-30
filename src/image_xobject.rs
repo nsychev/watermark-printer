@@ -1,7 +1,8 @@
 // This code is inspired by https://github.com/fschutt/printpdf/blob/2bebdc65d06dafbe926ed4b43fedd10f966c59d3/src/xobject.rs
 
 use crate::error::Error;
-use lopdf::ObjectId;
+use lopdf::Object::{Integer, Real};
+use lopdf::{Document, ObjectId};
 use png::{BitDepth, ColorType};
 
 #[derive(Debug, Clone)]
@@ -132,4 +133,29 @@ impl From<ImageXObject> for lopdf::Object {
     fn from(image: ImageXObject) -> Self {
         lopdf::Object::Stream(image.into())
     }
+}
+
+/// Microsoft Print to PDF generates documents with a flipped Y-axis.
+/// This function checks if such document is provided.
+pub fn has_flipped_coordinates(document: &Document) -> bool {
+    for (_page_number, page_id) in document.get_pages() {
+        if let Ok(content) = document.get_and_decode_page_content(page_id) {
+            for operation in &content.operations {
+                if operation.operator == "cm" && operation.operands.len() == 6 {
+                    // Matrix format: [a b c d e f] cm
+                    // d is the Y-scale component (index 3)
+                    let y_scale = match &operation.operands[3] {
+                        Real(val) => *val,
+                        Integer(val) => *val as f32,
+                        _ => continue,
+                    };
+
+                    if y_scale < 0.0 {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }

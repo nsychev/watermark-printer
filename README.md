@@ -20,7 +20,6 @@ Options:
   -s, --storage <STORAGE>                Path to store all PDFs [default: /tmp/printouts]
   -t, --team-id-script <TEAM_ID_SCRIPT>  Path to Lua script with custom `get_team_id' function
   -I, --next-ipp <NEXT_IPP>              Next printer IPP URL
-  -M, --mirror                           Mirror the watermark
 ```
 
 ## I don't know anything about printers, how do I set everything up?
@@ -90,14 +89,8 @@ If the script returns `nil`, the job will be skipped.
 
 ## Known issues
 
-1. For some unknown reason, Linux and Windows treat the printer differently — one of them sends “mirrored” PDF files so that watermarks become mirrored.
+1. Watermark text is coloured `#808080C0`, so if the client prints something grey, digits may be indistinguishable.
 
-   If you get this weird behaviour, try `-M` flag.
-
-   We hope you have identical machines so one or another way will work at all of them.
-
-2. Watermark text is coloured `#808080C0`, so if the client prints something grey, digits may be indistinguishable.
-
-3. Initially, I implemented native printing (using `libcups` on Linux / `winspool` on Windows), but when we tried to build it at NEF, it failed due to [a bug in the third-party Rust printing library](https://github.com/talesluna/rust-printers/issues/28), so I replaced it with printing via IPP.
+2. Initially, I implemented native printing (using `libcups` on Linux / `winspool` on Windows), but when we tried to build it at NEF, it failed due to [a bug in the third-party Rust printing library](https://github.com/talesluna/rust-printers/issues/28), so I replaced it with printing via IPP.
 
    The bug seems to be fixed since, so maybe it's time to turn back. If your printer doesn't speak IPP and you can't use CUPS, create an issue.
