@@ -193,7 +193,7 @@ impl IppServer {
             }
         });
 
-        let server = Server::bind(&addr).serve(make_svc);
+        let server = Server::try_bind(&addr)?.serve(make_svc);
         server.await
     }
 
