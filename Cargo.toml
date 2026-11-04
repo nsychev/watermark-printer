@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+authors = ["Nikita Sychev <root@nsychev.ru>"]
+repository = "https://github.com/nsychev/watermark-printer"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+flate2 = "1"
+lopdf = { version = "0.47", default-features = false }
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "v5"] }
+
+[profile.release]
+strip = true

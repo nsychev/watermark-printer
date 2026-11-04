@@ -1,0 +1,15 @@
+[package]
+name = "print-watermark"
+description = "Marks a normalised print job with the originating team: either a frame around a scaled-down page, or a see-through diagonal overlay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+print-document = { path = "../print-document" }
+lopdf.workspace = true
+ttf-parser = "0.25"
+thiserror.workspace = true

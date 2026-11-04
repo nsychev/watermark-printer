@@ -1,0 +1,14 @@
+[package]
+name = "print-document"
+description = "Normalises the document formats an IPP Everywhere printer must accept (PWG Raster, JPEG, PDF) into one PDF-based representation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+flate2.workspace = true
+lopdf.workspace = true
+thiserror.workspace = true

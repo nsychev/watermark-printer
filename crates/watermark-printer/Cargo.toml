@@ -1,0 +1,34 @@
+[package]
+name = "watermark-printer"
+description = "A virtual printer that marks every job with the watermark and forwards it to a real printer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "watermark-printer"
+path = "src/main.rs"
+
+[dependencies]
+print-document = { path = "../print-document" }
+print-watermark = { path = "../print-watermark" }
+
+ippserver = { git = "https://github.com/nsychev/ippserver-rs" }
+universal-print = { git = "https://github.com/nsychev/universal-print-rs" }
+
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+clap.workspace = true
+hostname = "0.4"
+mlua = { version = "0.12", features = ["lua54", "send", "vendored"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
