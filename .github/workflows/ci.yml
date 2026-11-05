@@ -1,7 +1,19 @@
 name: Build and release
-on: [push, pull_request]
-env:
-  GITHUB_TOKEN: ${{ github.token }}
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a release that is part way through creating one.
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
   lint:
     name: Lint using rustfmt and clippy
@@ -9,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -17,7 +29,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache Cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -32,11 +44,41 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  test:
+    name: Test on ${{ matrix.platform.os-name }}
+    runs-on: ${{ matrix.platform.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux only for pull requests and main; every host platform for
+        # release tags and manual runs.
+        platform: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && fromJSON('[{"os-name":"Linux","runs-on":"ubuntu-latest"},{"os-name":"Windows","runs-on":"windows-latest"},{"os-name":"macOS","runs-on":"macOS-latest"}]') || fromJSON('[{"os-name":"Linux","runs-on":"ubuntu-latest"}]') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Test
         run: cargo test --workspace --locked
 
-  release-matrix:
+  build:
     name: Build for ${{ matrix.platform.os-name }}
+    # Binaries are only needed for main, manual runs and release tags.
+    if: github.event_name != 'pull_request'
+    needs: [lint, test]
     runs-on: ${{ matrix.platform.runs-on }}
     strategy:
       fail-fast: false
@@ -55,7 +97,7 @@ jobs:
             runs-on: macOS-latest
             target: aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v1
         with:
@@ -65,12 +107,53 @@ jobs:
           args:
             "--locked --release"
           strip: true
-      - name: Publish artifacts and release
-        uses: houseabsolute/actions-rust-release@v0
+      - name: Package binary
+        uses: houseabsolute/actions-rust-release@v1
         with:
           executable-name: watermark-printer
           target: ${{ matrix.platform.target }}
           extra-files: |
             README.md
-            LICENSE.md
+            LICENSE
+            CHANGELOG.md
           changes-file: "CHANGELOG.md"
+
+  release:
+    name: Publish GitHub release
+    # Only a version tag produces a release.
+    if: github.ref_type == 'tag'
+    needs: build
+    # The publish action only runs on Linux.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # The publish action uses the whole changes file as the release body, so
+      # the section for this version has to be cut out first.
+      - name: Extract release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          heading="$(head -n 1 CHANGELOG.md)"
+          case "$heading" in
+            "# $version"*) ;;
+            *)
+              echo "::error file=CHANGELOG.md,line=1::First section is \"$heading\", expected one for $version"
+              exit 1
+              ;;
+          esac
+          notes="$(awk 'NR > 1 && /^# / { exit } NR > 1' CHANGELOG.md | sed '/./,$!d')"
+          if [ -z "$notes" ]; then
+            echo "::error file=CHANGELOG.md,line=1::The $version section is empty"
+            exit 1
+          fi
+          printf '%s\n' "$notes" > .changelog.latest.md
+          cat .changelog.latest.md
+
+      - name: Publish release
+        uses: houseabsolute/actions-rust-release/publish@v1
+        with:
+          executable-name: watermark-printer
+          changes-file: ".changelog.latest.md"

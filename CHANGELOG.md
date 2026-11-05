@@ -1,9 +1,3 @@
-# Unreleased
-
-- `-I`/`--destination` now defaults to `auto`, so the printer starts without
-  one and forwards to whatever this machine already prints with.
-- Updated dependencies, notably `lopdf` to 0.47 and `mlua` to 0.12.
-
 # 2.0.0 - 2026-11-04
 
 - [`ippserver`][ippserver] and [`universal-print`][universal-print]
@@ -13,6 +7,7 @@
 - PDF handling is rewritten, so `-M` flag is now dropped.
 - Added header to pages in addition to the watermark.
 - Attempts were made to support native printing on both Linux and Windows.
+  `-I` now defaults to `auto`.
 - Added limits for jobs.
 - Server now rejects jobs from clients if `team_id_script` returns `nil`.
 

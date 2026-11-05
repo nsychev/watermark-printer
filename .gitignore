@@ -4,3 +4,4 @@
 *.pdf
 source.bin
 /*.lua
+/.changelog.latest.md
