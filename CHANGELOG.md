@@ -6,6 +6,7 @@
   printing.
 - PDF handling is rewritten, so `-M` flag is now dropped.
 - Added header to pages in addition to the watermark.
+- Pages are forced to fit into the supplied media size.
 - Attempts were made to support native printing on both Linux and Windows.
   `-I` now defaults to `auto`.
 - Added limits for jobs.

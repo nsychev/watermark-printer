@@ -118,11 +118,9 @@ impl WatermarkBackend {
     }
 }
 
-#[async_trait::async_trait]
-impl Backend for WatermarkBackend {
-    type Plan = Plan;
-
-    async fn validate(&self, request: &JobRequest) -> Result<Accepted<Plan>, Rejection> {
+impl WatermarkBackend {
+    /// [`Backend::validate`] will log any `Rejection` this method returns.
+    fn check(&self, request: &JobRequest) -> Result<Accepted<Plan>, Rejection> {
         // Who is this, and may they print at all?
         let team = match self.teams.lookup(request.origin) {
             Ok(Some(team)) => team,
@@ -194,6 +192,25 @@ impl Backend for WatermarkBackend {
             },
         })
     }
+}
+
+#[async_trait::async_trait]
+impl Backend for WatermarkBackend {
+    type Plan = Plan;
+
+    async fn validate(&self, request: &JobRequest) -> Result<Accepted<Plan>, Rejection> {
+        self.check(request).inspect_err(|rejection| {
+            tracing::warn!(
+                job = request.id,
+                origin = %request.origin,
+                status = ?rejection.status,
+                format = %request.format,
+                bytes = request.document.len(),
+                "refused the job: {}",
+                rejection.message,
+            );
+        })
+    }
 
     async fn print(&self, request: JobRequest, plan: Plan) -> Result<(), String> {
         let media = self.media_for(&request);
@@ -217,6 +234,7 @@ impl Backend for WatermarkBackend {
                     timestamp: &timestamp,
                 },
                 &layout,
+                media,
             )
             .map_err(|e| format!("could not mark the document: {e}"))
         })

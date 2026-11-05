@@ -3,7 +3,7 @@
 pub mod text;
 
 use lopdf::{Dictionary, Object, Stream, dictionary};
-use print_document::{SourceDocument, SourcePage};
+use print_document::{Media, SourceDocument, SourcePage};
 
 /// Sizes and shades of the marks, all in PDF points unless stated.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -12,8 +12,6 @@ pub struct Layout {
     pub margin: f64,
     /// Space between the header and the frame.
     pub gap: f64,
-    /// Space between the frame and the page inside it.
-    pub inset: f64,
     /// Type size of the team, in the middle of the header.
     pub team_size: f64,
     /// Type size of the time and the page counter, at its ends.
@@ -41,7 +39,6 @@ impl Default for Layout {
         Layout {
             margin: 14.0,
             gap: 7.0,
-            inset: 3.0,
             team_size: 18.0,
             // Large enough to read without stooping over the page.
             meta_size: 14.0,
@@ -98,7 +95,12 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Marks every page of `source` and serialises the result.
-pub fn render(source: SourceDocument, stamp: &Stamp<'_>, layout: &Layout) -> Result<Rendered> {
+pub fn render(
+    source: SourceDocument,
+    stamp: &Stamp<'_>,
+    layout: &Layout,
+    sheet: Media,
+) -> Result<Rendered> {
     let (mut doc, pages) = source.into_parts();
     let total = pages.len();
     let mut lossy_text = false;
@@ -117,7 +119,7 @@ pub fn render(source: SourceDocument, stamp: &Stamp<'_>, layout: &Layout) -> Res
 
     for (index, page) in pages.iter().enumerate() {
         let (geometry, content, lossy) =
-            page_content(&fonts, layout, stamp, page, index + 1, total);
+            page_content(&fonts, layout, stamp, page, index + 1, total, sheet);
         lossy_text |= lossy;
 
         let content_id = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
@@ -206,19 +208,18 @@ struct Geometry {
 }
 
 impl Geometry {
-    /// The sheet a page is printed on: its own size, with a landscape page
-    /// stood up so that every sheet of a job is the same way round.
-    fn sheet_for(page: &SourcePage) -> (f64, f64) {
-        if page.width > page.height {
-            (page.height, page.width)
+    /// The sheet a page is printed on, always in portrait orientation.
+    fn sheet_for(sheet: Media) -> (f64, f64) {
+        if sheet.width > sheet.height {
+            (sheet.height, sheet.width)
         } else {
-            (page.width, page.height)
+            (sheet.width, sheet.height)
         }
     }
 
-    /// Fits `page` into the sheet, leaving room for the header above it.
-    fn frame(layout: &Layout, page: &SourcePage) -> Self {
-        let sheet = Self::sheet_for(page);
+    /// Fits `page` onto `sheet`, leaving room for the header above it.
+    fn frame(layout: &Layout, page: &SourcePage, sheet: Media) -> Self {
+        let sheet = Self::sheet_for(sheet);
         let turned = page.width > page.height;
 
         // What the page measures once it has been turned.
@@ -228,11 +229,11 @@ impl Geometry {
             (page.width, page.height)
         };
 
-        let box_x = layout.margin + layout.inset;
+        let box_x = layout.margin;
         let box_w = sheet.0 - 2.0 * box_x;
-        let box_y = layout.margin + layout.inset;
+        let box_y = layout.margin;
         let box_top = sheet.1 - layout.margin - layout.header_band() - layout.gap;
-        let box_h = box_top - layout.inset - box_y;
+        let box_h = box_top - box_y;
 
         // Never enlarge: a page that already fits is left at its own size,
         // only moved, so a small sheet is not blown up to fill the frame.
@@ -294,13 +295,14 @@ fn page_content(
     page: &SourcePage,
     number: usize,
     total: usize,
+    sheet: Media,
 ) -> (Geometry, String, bool) {
     // A sheet too small to carry a header gets the overlay alone, so a label
     // or an envelope still comes out marked rather than unreadable.
     let framed = page.width >= Layout::MIN_FRAMEABLE && page.height >= Layout::MIN_FRAMEABLE;
 
     let geometry = if framed {
-        Geometry::frame(layout, page)
+        Geometry::frame(layout, page, sheet)
     } else {
         Geometry::untouched(page)
     };
@@ -347,16 +349,16 @@ fn draw_frame(
     } = marks;
     let mut lossy = false;
 
-    // The rectangle, just outside the page.
+    // Frame the page in the rectangle.
     out.push_str("q\n");
     out.push_str(&format!(
         "{:.3} G {:.3} w\n{:.4} {:.4} {:.4} {:.4} re S\nQ\n",
         layout.border_gray,
         layout.border_width,
-        geometry.x - layout.inset,
-        geometry.y - layout.inset,
-        geometry.width + 2.0 * layout.inset,
-        geometry.height + 2.0 * layout.inset,
+        geometry.x,
+        geometry.y,
+        geometry.width,
+        geometry.height,
     ));
 
     let counter = format!("{number} / {total}");
@@ -586,7 +588,7 @@ mod tests {
     }
 
     fn content(layout: &Layout, page: &SourcePage) -> String {
-        page_content(&fonts(), layout, &stamp(), page, 2, 7).1
+        page_content(&fonts(), layout, &stamp(), page, 2, 7, Media::A4).1
     }
 
     /// The overlay's part of a content stream.
@@ -608,7 +610,7 @@ mod tests {
     #[test]
     fn framing_scales_the_page_down_and_centres_it() {
         let a4 = page(595.276, 841.89);
-        let geometry = Geometry::frame(&Layout::default(), &a4);
+        let geometry = Geometry::frame(&Layout::default(), &a4, Media::A4);
 
         assert!(geometry.scale() < 1.0, "{geometry:?}");
         assert!(geometry.scale() > 0.9, "{geometry:?}");
@@ -620,7 +622,9 @@ mod tests {
         let right = a4.width - (geometry.x + geometry.width);
         assert!((left - right).abs() < 1e-6, "{left} vs {right}");
         // Clear of the sheet edges.
-        assert!(geometry.y > Layout::default().margin);
+        let layout = Layout::default();
+        assert!(geometry.x >= layout.margin - 1e-9, "{geometry:?}");
+        assert!(geometry.y >= layout.margin - 1e-9, "{geometry:?}");
     }
 
     #[test]
@@ -628,10 +632,10 @@ mod tests {
         let layout = Layout::default();
         let fonts = fonts();
         let a4 = page(595.276, 841.89);
-        let geometry = Geometry::frame(&layout, &a4);
+        let geometry = Geometry::frame(&layout, &a4, Media::A4);
 
         let baseline = a4.height - layout.margin - fonts.bold.cap_height(layout.team_size);
-        let frame_top = geometry.y + geometry.height + layout.inset;
+        let frame_top = geometry.y + geometry.height;
         // The header's baseline sits above the frame, with its descenders
         // clear of it.
         assert!(
@@ -644,7 +648,7 @@ mod tests {
         );
 
         // With no footer, the frame reaches down to the bottom margin.
-        let frame_bottom = geometry.y - layout.inset;
+        let frame_bottom = geometry.y;
         assert!(
             (frame_bottom - layout.margin).abs() < 1e-9,
             "frame bottom {frame_bottom} vs margin {}",
@@ -675,7 +679,7 @@ mod tests {
     fn the_labels_change_with_what_is_stamped() {
         let layout = Layout::default();
         let a4 = page(595.276, 841.89);
-        let one = page_content(&fonts(), &layout, &stamp(), &a4, 2, 7).1;
+        let one = page_content(&fonts(), &layout, &stamp(), &a4, 2, 7, Media::A4).1;
         let other = page_content(
             &fonts(),
             &layout,
@@ -686,6 +690,7 @@ mod tests {
             &a4,
             1,
             1,
+            Media::A4,
         )
         .1;
         assert_ne!(one, other);
@@ -779,7 +784,7 @@ mod tests {
             );
 
             // And the page still gets most of the sheet.
-            let geometry = Geometry::frame(&layout, &sheet);
+            let geometry = Geometry::frame(&layout, &sheet, Media::new(sheet.width, sheet.height));
             assert!(
                 geometry.scale() > 0.85,
                 "{name}: scaled to {}",
@@ -889,6 +894,7 @@ mod tests {
             &a4,
             1,
             1,
+            Media::A4,
         )
         .1;
 
@@ -928,7 +934,7 @@ mod tests {
     fn a_landscape_page_is_stood_up_on_a_portrait_sheet() {
         let layout = Layout::default();
         let landscape = page(841.89, 595.276);
-        let geometry = Geometry::frame(&layout, &landscape);
+        let geometry = Geometry::frame(&layout, &landscape, Media::A4);
 
         // The sheet is portrait, whatever shape the page was.
         assert!(geometry.sheet.1 > geometry.sheet.0, "{geometry:?}");
@@ -951,7 +957,7 @@ mod tests {
     #[test]
     fn a_portrait_page_is_left_the_way_it_is() {
         let layout = Layout::default();
-        let geometry = Geometry::frame(&layout, &page(595.276, 841.89));
+        let geometry = Geometry::frame(&layout, &page(595.276, 841.89), Media::A4);
         assert!(!geometry.turned);
         assert_eq!(geometry.sheet, (595.276, 841.89));
         let [a, b, c, d, ..] = geometry.matrix;
@@ -982,7 +988,7 @@ mod tests {
     fn a_turned_page_lands_inside_its_frame() {
         let layout = Layout::default();
         let landscape = page(841.89, 595.276);
-        let geometry = Geometry::frame(&layout, &landscape);
+        let geometry = Geometry::frame(&layout, &landscape, Media::A4);
 
         // Map the source page's four corners through the matrix and check
         // they all land in the framed box.
@@ -1019,6 +1025,7 @@ mod tests {
                 timestamp: "now",
             },
             &Layout::default(),
+            Media::A4,
         )
         .unwrap();
         // The bundled font covers Cyrillic, so nothing is substituted.
@@ -1034,6 +1041,7 @@ mod tests {
                 timestamp: "now",
             },
             &Layout::default(),
+            Media::A4,
         )
         .unwrap();
         assert!(rendered.lossy_text);
@@ -1041,7 +1049,13 @@ mod tests {
 
     #[test]
     fn rendering_produces_a_loadable_pdf_with_one_page_per_source_page() {
-        let rendered = render(source(595.0, 842.0), &stamp(), &Layout::default()).unwrap();
+        let rendered = render(
+            source(595.0, 842.0),
+            &stamp(),
+            &Layout::default(),
+            Media::A4,
+        )
+        .unwrap();
         assert_eq!(rendered.pages, 1);
         assert!(!rendered.lossy_text);
         assert!(rendered.bytes.starts_with(b"%PDF-"), "no header");
@@ -1078,7 +1092,13 @@ mod tests {
         );
 
         // And the finished PDF references no font, so nothing is embedded.
-        let rendered = render(source(595.0, 842.0), &stamp(), &Layout::default()).unwrap();
+        let rendered = render(
+            source(595.0, 842.0),
+            &stamp(),
+            &Layout::default(),
+            Media::A4,
+        )
+        .unwrap();
         let reloaded = lopdf::Document::load_mem(&rendered.bytes).unwrap();
         let page_id = *reloaded.get_pages().values().next().unwrap();
         let resources = reloaded
@@ -1093,7 +1113,13 @@ mod tests {
 
     #[test]
     fn the_original_page_tree_does_not_survive_into_the_output() {
-        let rendered = render(source(595.0, 842.0), &stamp(), &Layout::default()).unwrap();
+        let rendered = render(
+            source(595.0, 842.0),
+            &stamp(),
+            &Layout::default(),
+            Media::A4,
+        )
+        .unwrap();
         let reloaded = lopdf::Document::load_mem(&rendered.bytes).unwrap();
         // Exactly one page tree root and one catalog, i.e. the ones we built.
         let catalogs = reloaded
@@ -1108,5 +1134,35 @@ mod tests {
             })
             .count();
         assert_eq!(catalogs, 1);
+    }
+
+    #[test]
+    fn a_letter_page_is_fitted_to_the_sheet_the_printer_offers() {
+        let layout = Layout::default();
+        let letter = page(612.0, 792.0);
+        let geometry = Geometry::frame(&layout, &letter, Media::A4);
+
+        // The sheet is the Printer's, not the one the Client happened to send.
+        assert!((geometry.sheet.0 - Media::A4.width).abs() < 0.01);
+        assert!((geometry.sheet.1 - Media::A4.height).abs() < 0.01);
+
+        // And the page sits inside it, margins and all.
+        assert!(geometry.x >= layout.margin - 0.01);
+        assert!(geometry.y >= layout.margin - 0.01);
+        assert!(geometry.x + geometry.width <= geometry.sheet.0 - layout.margin + 0.01);
+        assert!(geometry.y + geometry.height <= geometry.sheet.1 - layout.margin + 0.01);
+    }
+
+    #[test]
+    fn an_a4_page_is_fitted_to_a_letter_sheet() {
+        let layout = Layout::default();
+        let a4 = page(595.276, 841.89);
+        let geometry = Geometry::frame(&layout, &a4, Media::LETTER);
+
+        assert!((geometry.sheet.0 - Media::LETTER.width).abs() < 0.01);
+        assert!((geometry.sheet.1 - Media::LETTER.height).abs() < 0.01);
+        // Letter is the shorter sheet, so the page had to come down a little.
+        assert!(geometry.scale() < 1.0, "scale was {}", geometry.scale());
+        assert!(geometry.y + geometry.height <= geometry.sheet.1 - layout.margin + 0.01);
     }
 }

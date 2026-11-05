@@ -63,46 +63,70 @@ fn inherited(doc: &Document, page_id: ObjectId, key: &[u8]) -> Option<Object> {
     None
 }
 
-/// The page's media box as `[x0, y0, x1, y1]`, normalised so that
-/// `x0 < x1` and `y0 < y1`.
-fn media_box(doc: &Document, page_id: ObjectId) -> [f64; 4] {
-    let numbers = inherited(doc, page_id, b"MediaBox")
-        .as_ref()
-        .and_then(|o| o.as_array().ok())
-        .map(|array| {
-            array
-                .iter()
-                .map(|v| match v {
-                    Object::Integer(i) => *i as f64,
-                    Object::Real(r) => *r as f64,
-                    Object::Reference(id) => doc
-                        .get_object(*id)
-                        .ok()
-                        .and_then(|o| match o {
-                            Object::Integer(i) => Some(*i as f64),
-                            Object::Real(r) => Some(*r as f64),
-                            _ => None,
-                        })
-                        .unwrap_or(0.0),
-                    _ => 0.0,
-                })
-                .collect::<Vec<f64>>()
-        })
-        .filter(|v| v.len() == 4);
+/// Reads a number, following a reference if that is what it is.
+fn number(doc: &Document, value: &Object) -> f64 {
+    match value {
+        Object::Integer(i) => *i as f64,
+        Object::Real(r) => *r as f64,
+        Object::Reference(id) => doc.get_object(*id).map(|o| number(doc, o)).unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
 
-    let Some(v) = numbers else {
-        // A page with no media box is Letter by PDF's own default.
-        return [0.0, 0.0, 612.0, 792.0];
+/// Reads a rectangle, normalised so that `x0 < x1` and `y0 < y1`.
+fn rectangle(doc: &Document, value: &Object) -> Option<[f64; 4]> {
+    let array = match value {
+        Object::Array(a) => a.clone(),
+        Object::Reference(id) => doc.get_object(*id).ok()?.as_array().ok()?.clone(),
+        _ => return None,
+    };
+    if array.len() != 4 {
+        return None;
+    }
+    let v: Vec<f64> = array.iter().map(|o| number(doc, o)).collect();
+    Some([
+        v[0].min(v[2]),
+        v[1].min(v[3]),
+        v[0].max(v[2]),
+        v[1].max(v[3]),
+    ])
+}
+
+/// Reads one of the page's rectangle attributes, if it is usable.
+fn page_box(doc: &Document, page_id: ObjectId, key: &[u8]) -> Option<[f64; 4]> {
+    let value = inherited(doc, page_id, key)?;
+    let rect = rectangle(doc, &value)?;
+    // A degenerate box would make the page invisible.
+    if rect[2] - rect[0] < 1.0 || rect[3] - rect[1] < 1.0 {
+        return None;
+    }
+    Some(rect)
+}
+
+/// The page's media box as `[x0, y0, x1, y1]`.
+fn media_box(doc: &Document, page_id: ObjectId) -> [f64; 4] {
+    // A page with no media box is Letter by PDF's own default.
+    page_box(doc, page_id, b"MediaBox").unwrap_or([0.0, 0.0, 612.0, 792.0])
+}
+
+/// `/CropBox` is a visible part of the page.
+fn visible_box(doc: &Document, page_id: ObjectId) -> [f64; 4] {
+    let media = media_box(doc, page_id);
+    let Some(crop) = page_box(doc, page_id, b"CropBox") else {
+        return media;
     };
 
-    let (x0, x1) = (v[0].min(v[2]), v[0].max(v[2]));
-    let (y0, y1) = (v[1].min(v[3]), v[1].max(v[3]));
-
-    // A degenerate box would make the page invisible; fall back instead.
-    if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
-        return [0.0, 0.0, 612.0, 792.0];
+    let clipped = [
+        crop[0].max(media[0]),
+        crop[1].max(media[1]),
+        crop[2].min(media[2]),
+        crop[3].min(media[3]),
+    ];
+    // Boxes that do not overlap leave nothing to show, so keep the media box.
+    if clipped[2] - clipped[0] < 1.0 || clipped[3] - clipped[1] < 1.0 {
+        return media;
     }
-    [x0, y0, x1, y1]
+    clipped
 }
 
 /// The page's `/Rotate`, reduced to one of 0, 90, 180, 270.
@@ -170,13 +194,191 @@ fn content(doc: &Document, page_id: ObjectId) -> Vec<u8> {
     out
 }
 
+/// Annotation flags, from PDF 32000-1 table 165.
+mod annot_flag {
+    /// Not shown at all, on screen or on paper.
+    pub const HIDDEN: i64 = 1 << 1;
+    /// Not shown on screen; a mark the author did not mean to be seen.
+    pub const NOVIEW: i64 = 1 << 5;
+}
+
+/// The page's annotations, as dictionaries.
+fn annotations(doc: &Document, page_id: ObjectId) -> Vec<Dictionary> {
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+    let array = match page.get(b"Annots") {
+        Ok(Object::Array(a)) => a.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Array(a)) => a.clone(),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+
+    array
+        .iter()
+        .filter_map(|entry| match entry {
+            Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+            Object::Dictionary(dict) => Some(dict.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The appearance stream an annotation is currently showing.
+///
+/// `/AP` `/N` is either the stream itself or, for anything with more than one
+/// look such as a checkbox, a dictionary of states that `/AS` chooses from.
+fn appearance_stream(doc: &Document, annot: &Dictionary) -> Option<ObjectId> {
+    let appearances = match annot.get(b"AP").ok()? {
+        Object::Dictionary(dict) => dict.clone(),
+        Object::Reference(id) => doc.get_dictionary(*id).ok()?.clone(),
+        _ => return None,
+    };
+
+    match appearances.get(b"N").ok()? {
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Stream(_)) => Some(*id),
+            Ok(Object::Dictionary(states)) => chosen_state(annot, states),
+            _ => None,
+        },
+        Object::Dictionary(states) => chosen_state(annot, states),
+        _ => None,
+    }
+}
+
+/// Picks the appearance named by `/AS`.
+fn chosen_state(annot: &Dictionary, states: &Dictionary) -> Option<ObjectId> {
+    if let Ok(Object::Name(state)) = annot.get(b"AS")
+        && let Ok(Object::Reference(id)) = states.get(state)
+    {
+        return Some(*id);
+    }
+    // With no `/AS` to go on, a single state is still unambiguous.
+    if states.len() == 1
+        && let Some((_, Object::Reference(id))) = states.iter().next()
+    {
+        return Some(*id);
+    }
+    None
+}
+
+/// The matrix that puts an appearance stream inside its annotation rectangle.
+///
+/// PDF 32000-1 12.5.5: send the appearance's `/BBox` through its `/Matrix`,
+/// take the bounds of what comes out, and map those onto `/Rect`.
+fn placement(doc: &Document, annot: &Dictionary, appearance: ObjectId) -> Option<[f64; 6]> {
+    let rect = rectangle(doc, annot.get(b"Rect").ok()?)?;
+    let stream = doc.get_object(appearance).ok()?.as_stream().ok()?;
+    let bbox = rectangle(doc, stream.dict.get(b"BBox").ok()?)?;
+
+    let m = stream
+        .dict
+        .get(b"Matrix")
+        .ok()
+        .and_then(|o| o.as_array().ok())
+        .map(|a| a.iter().map(|v| number(doc, v)).collect::<Vec<f64>>())
+        .filter(|v| v.len() == 6)
+        .unwrap_or_else(|| vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+
+    let corners = [
+        (bbox[0], bbox[1]),
+        (bbox[2], bbox[1]),
+        (bbox[2], bbox[3]),
+        (bbox[0], bbox[3]),
+    ];
+    let (mut x0, mut y0) = (f64::INFINITY, f64::INFINITY);
+    let (mut x1, mut y1) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for (x, y) in corners {
+        let tx = m[0] * x + m[2] * y + m[4];
+        let ty = m[1] * x + m[3] * y + m[5];
+        x0 = x0.min(tx);
+        x1 = x1.max(tx);
+        y0 = y0.min(ty);
+        y1 = y1.max(ty);
+    }
+
+    // An appearance with no area cannot be scaled onto anything.
+    if x1 - x0 <= f64::EPSILON || y1 - y0 <= f64::EPSILON {
+        return None;
+    }
+
+    let sx = (rect[2] - rect[0]) / (x1 - x0);
+    let sy = (rect[3] - rect[1]) / (y1 - y0);
+    Some([sx, 0.0, 0.0, sy, rect[0] - x0 * sx, rect[1] - y0 * sy])
+}
+
+/// Draws the page's annotations into its own content.
+fn flatten_annotations(doc: &Document, page_id: ObjectId, resources: &mut Dictionary) -> Vec<u8> {
+    let annots = annotations(doc, page_id);
+    if annots.is_empty() {
+        return Vec::new();
+    }
+
+    let mut xobjects = match resources.get(b"XObject") {
+        Ok(Object::Dictionary(dict)) => dict.clone(),
+        Ok(Object::Reference(id)) => doc.get_dictionary(*id).cloned().unwrap_or_default(),
+        _ => Dictionary::new(),
+    };
+
+    let mut out = Vec::new();
+    for (index, annot) in annots.iter().enumerate() {
+        let flags = annot.get(b"F").and_then(Object::as_i64).unwrap_or(0);
+        if flags & (annot_flag::HIDDEN | annot_flag::NOVIEW) != 0 {
+            continue;
+        }
+        // A popup is the note window, not the mark left on the page.
+        if matches!(
+            annot.get(b"Subtype").and_then(Object::as_name),
+            Ok(b"Popup")
+        ) {
+            continue;
+        }
+
+        let Some(appearance) = appearance_stream(doc, annot) else {
+            continue;
+        };
+        let Some(m) = placement(doc, annot, appearance) else {
+            continue;
+        };
+
+        // The page may already have an XObject under this name.
+        let mut name = format!("WmAnnot{index}");
+        while xobjects.has(name.as_bytes()) {
+            name.push('_');
+        }
+        xobjects.set(name.clone(), Object::Reference(appearance));
+
+        out.extend_from_slice(
+            format!(
+                "q {:.4} {:.4} {:.4} {:.4} {:.4} {:.4} cm /{} Do Q\n",
+                m[0], m[1], m[2], m[3], m[4], m[5], name
+            )
+            .as_bytes(),
+        );
+    }
+
+    if !out.is_empty() {
+        resources.set("XObject", Object::Dictionary(xobjects));
+    }
+    out
+}
+
 /// Turns one page into a form, and reports the size it should be painted at.
 fn page_to_form(doc: &mut Document, page_id: ObjectId) -> Result<SourcePage> {
-    let [x0, y0, x1, y1] = media_box(doc, page_id);
+    let [x0, y0, x1, y1] = visible_box(doc, page_id);
     let (bw, bh) = (x1 - x0, y1 - y0);
     let rotate = rotation(doc, page_id);
-    let resources = resources(doc, page_id);
-    let data = content(doc, page_id);
+    let mut resources = resources(doc, page_id);
+    let mut data = content(doc, page_id);
+
+    // Annotations go on top of the page content, the way a viewer stacks them.
+    let annotations = flatten_annotations(doc, page_id, &mut resources);
+    if !annotations.is_empty() {
+        data.push(b'\n');
+        data.extend_from_slice(&annotations);
+    }
 
     // A matrix that moves the media box origin to (0, 0) and applies
     // /Rotate clockwise, so the form always occupies [0, width] x [0, height].
@@ -403,5 +605,178 @@ mod tests {
     #[test]
     fn rubbish_is_refused() {
         assert!(load(b"not a pdf at all").is_err());
+    }
+
+    /// Builds a one-page PDF with a crop box inside its media box.
+    fn cropped_page(media: [f64; 4], crop: [f64; 4]) -> Vec<u8> {
+        let mut doc = Document::with_version("1.7");
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), b"0 0 0 rg".to_vec()));
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "MediaBox" => media.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
+            "CropBox" => crop.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
+            "Resources" => dictionary! {},
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1i64,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    /// Builds a one-page PDF carrying one annotation with an appearance.
+    fn annotated_page(subtype: &str, flags: Option<i64>) -> Vec<u8> {
+        let mut doc = Document::with_version("1.7");
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), b"0 0 0 rg".to_vec()));
+        let appearance = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 10.into(), 10.into()],
+            },
+            b"1 0 0 rg 0 0 10 10 re f".to_vec(),
+        ));
+        let mut annot = dictionary! {
+            "Type" => "Annot",
+            "Subtype" => subtype,
+            // Ten units square becomes a hundred wide and fifty tall.
+            "Rect" => vec![20.into(), 30.into(), 120.into(), 80.into()],
+            "AP" => dictionary! { "N" => Object::Reference(appearance) },
+        };
+        if let Some(flags) = flags {
+            annot.set("F", flags);
+        }
+        let annot_id = doc.add_object(annot);
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "MediaBox" => vec![0.into(), 0.into(), 400.into(), 400.into()],
+            "Resources" => dictionary! {},
+            "Annots" => vec![Object::Reference(annot_id)],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1i64,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    /// The content stream of the first page's form.
+    fn form_body(bytes: &[u8]) -> String {
+        let loaded = load(bytes).unwrap();
+        let stream = loaded
+            .document()
+            .get_object(loaded.pages()[0].form)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .clone();
+        let data = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
+    #[test]
+    fn the_crop_box_decides_how_much_of_the_page_is_shown() {
+        let (page, _) = form_of(&cropped_page(
+            [0.0, 0.0, 400.0, 300.0],
+            [20.0, 20.0, 380.0, 280.0],
+        ));
+        assert!(
+            (page.width - 360.0).abs() < 0.01,
+            "width was {}",
+            page.width
+        );
+        assert!(
+            (page.height - 260.0).abs() < 0.01,
+            "height was {}",
+            page.height
+        );
+    }
+
+    #[test]
+    fn a_crop_box_reaching_outside_the_sheet_cannot_enlarge_it() {
+        let (page, _) = form_of(&cropped_page(
+            [0.0, 0.0, 400.0, 300.0],
+            [-50.0, -50.0, 900.0, 900.0],
+        ));
+        assert!(
+            (page.width - 400.0).abs() < 0.01,
+            "width was {}",
+            page.width
+        );
+        assert!(
+            (page.height - 300.0).abs() < 0.01,
+            "height was {}",
+            page.height
+        );
+    }
+
+    #[test]
+    fn an_annotation_is_drawn_into_the_page() {
+        let body = form_body(&annotated_page("Widget", None));
+        assert!(body.contains("Do"), "the appearance was not drawn: {body}");
+        assert!(
+            body.contains("WmAnnot0"),
+            "the appearance was not named: {body}"
+        );
+    }
+
+    #[test]
+    fn an_annotation_is_stretched_over_its_rectangle() {
+        let body = form_body(&annotated_page("Widget", None));
+        // A ten-unit square mapped onto 100x50 at (20, 30).
+        let line = body
+            .lines()
+            .find(|l| l.contains("cm"))
+            .unwrap_or_else(|| panic!("no placement in {body}"));
+        for expected in ["10.0000", "5.0000", "20.0000", "30.0000"] {
+            assert!(line.contains(expected), "{expected} missing from {line}");
+        }
+    }
+
+    #[test]
+    fn a_hidden_annotation_is_left_where_the_author_put_it() {
+        // Flag bit 2 is Hidden; flattening must not reveal it.
+        let body = form_body(&annotated_page("Widget", Some(1 << 1)));
+        assert!(
+            !body.contains("WmAnnot"),
+            "a hidden annotation was drawn: {body}"
+        );
+    }
+
+    #[test]
+    fn a_popup_is_not_drawn_on_the_page() {
+        let body = form_body(&annotated_page("Popup", None));
+        assert!(!body.contains("WmAnnot"), "a popup was drawn: {body}");
     }
 }
