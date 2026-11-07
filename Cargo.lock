@@ -2204,7 +2204,7 @@ checksum = "993ad287eb20e8ba755312801cfe1413e0f25d604075863acaddca10b04c1833"
 [[package]]
 name = "universal-print"
 version = "0.1.0"
-source = "git+https://github.com/nsychev/universal-print-rs#e6ad4a1abe9704369957c0dafa168339ad318154"
+source = "git+https://github.com/nsychev/universal-print-rs#643e0be8999b15f921ee370624d51ba7a57ac303"
 dependencies = [
  "ipp",
  "printers",
