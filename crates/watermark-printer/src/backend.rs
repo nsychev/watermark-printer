@@ -1,15 +1,38 @@
 //! Job processing.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::Local;
-use ippserver::{Accepted, Backend, JobRequest, Rejection, StatusCode};
+use chrono::{DateTime, Local};
+use ippserver::{Accepted, Backend, JobRequest, Outcome, Rejection, StatusCode};
 use print_document::{Format, Media, pjl};
 use print_watermark::{Layout, Stamp};
 use universal_print::{Job, Sink};
 
 use crate::teams::TeamIds;
+
+/// How many times a job is offered to the printer before it is given up on.
+/// The first attempt is the Client's; the rest follow a deferral.
+const MAX_ATTEMPTS: u32 = 6;
+
+/// How long a job waits after each attempt, giving up after [`MAX_ATTEMPTS`].
+/// About eight minutes in all, which is long enough to refill the paper.
+const DEFER_DELAYS: [Duration; (MAX_ATTEMPTS - 1) as usize] = [
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+    Duration::from_secs(120),
+    Duration::from_secs(240),
+];
+
+/// How long a printer that would not take a job is assumed to still be
+/// refusing. Within this window a new job is parked without being offered,
+/// rather than spending the sink's retries over again to learn the same
+/// thing. Deferred jobs are always offered: they are what finds out that the
+/// printer is working again.
+const REFUSAL_LASTS: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub struct Plan {
@@ -19,6 +42,18 @@ pub struct Plan {
     format: Format,
     /// Whether the document arrived wrapped in PJL.
     wrapped: bool,
+    /// When the Client handed the job over.
+    ///
+    /// The mark says this rather than the moment the page is sent, so that a
+    /// job held back while the printer was out of paper still says when its
+    /// team printed it, and so that re-rendering it produces the same bytes.
+    submitted: DateTime<Local>,
+}
+
+/// How long to hold a job that has been offered `attempt` times, or `None`
+/// when it has had its chances.
+fn defer_for(attempt: u32) -> Option<Duration> {
+    DEFER_DELAYS.get(attempt.checked_sub(1)? as usize).copied()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +88,8 @@ pub struct WatermarkBackend {
     /// The sheet an image is fitted to when the Client asks for nothing.
     default_media: Media,
     limits: Limits,
+    /// When the printer last would not take a job.
+    refused_at: Mutex<Option<Instant>>,
 }
 
 impl WatermarkBackend {
@@ -71,7 +108,31 @@ impl WatermarkBackend {
             sink,
             storage,
             default_media,
+            refused_at: Mutex::new(None),
         }
+    }
+
+    /// Whether the printer turned a job away recently enough that the next
+    /// one is better off waiting its turn than finding out the hard way.
+    fn still_refusing(&self) -> bool {
+        self.refused_at
+            .lock()
+            .expect("the refusal clock is poisoned")
+            .is_some_and(|at| at.elapsed() < REFUSAL_LASTS)
+    }
+
+    fn note_refusal(&self) {
+        *self
+            .refused_at
+            .lock()
+            .expect("the refusal clock is poisoned") = Some(Instant::now());
+    }
+
+    fn note_success(&self) {
+        *self
+            .refused_at
+            .lock()
+            .expect("the refusal clock is poisoned") = None;
     }
 
     /// Unwraps a PJL envelope, if there is one.
@@ -96,7 +157,10 @@ impl WatermarkBackend {
     }
 
     /// Writes a copy of what was printed, best effort.
-    fn keep(&self, request: &JobRequest, bytes: &[u8]) -> Option<PathBuf> {
+    ///
+    /// The name comes from the job, not the clock, so a job offered more than
+    /// once leaves one copy rather than one per attempt.
+    fn keep(&self, request: &JobRequest, plan: &Plan, bytes: &[u8]) -> Option<PathBuf> {
         let directory = self.storage.as_ref()?.join(request.origin.to_string());
         if let Err(error) = std::fs::create_dir_all(&directory) {
             tracing::warn!(%error, directory = %directory.display(), "could not create the storage directory");
@@ -105,7 +169,7 @@ impl WatermarkBackend {
 
         let path = directory.join(format!(
             "{}-{}.pdf",
-            Local::now().format("%Y%m%dT%H%M%S"),
+            plan.submitted.format("%Y%m%dT%H%M%S"),
             request.uuid
         ));
         match std::fs::write(&path, bytes) {
@@ -189,6 +253,7 @@ impl WatermarkBackend {
                 team,
                 format,
                 wrapped,
+                submitted: Local::now(),
             },
         })
     }
@@ -212,11 +277,27 @@ impl Backend for WatermarkBackend {
         })
     }
 
-    async fn print(&self, request: JobRequest, plan: Plan) -> Result<(), String> {
-        let media = self.media_for(&request);
+    async fn print(&self, request: &JobRequest, plan: &Plan, attempt: u32) -> Outcome {
+        // The printer turned a job away a moment ago, so this one would only
+        // learn the same thing the slow way. Park it without rendering it.
+        if attempt == 1
+            && self.still_refusing()
+            && let Some(after) = defer_for(attempt)
+        {
+            tracing::info!(
+                job = request.id,
+                "the printer was not taking jobs; waiting {after:?} before offering this one"
+            );
+            return Outcome::Deferred {
+                reason: "the printer was not taking jobs".into(),
+                after,
+            };
+        }
+
+        let media = self.media_for(request);
         let layout = self.layout;
         let stamp_team = plan.team.clone();
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp = plan.submitted.format("%Y-%m-%d %H:%M:%S").to_string();
         let document = request.document.clone();
         let wrapped = plan.wrapped;
         let format = plan.format;
@@ -239,7 +320,14 @@ impl Backend for WatermarkBackend {
             .map_err(|e| format!("could not mark the document: {e}"))
         })
         .await
-        .map_err(|e| format!("the rendering task failed: {e}"))??;
+        .map_err(|e| format!("the rendering task failed: {e}"));
+
+        // A document that cannot be marked will not be marked next time
+        // either, so there is nothing to wait for.
+        let rendered = match rendered.and_then(|result| result) {
+            Ok(rendered) => rendered,
+            Err(error) => return Outcome::Failed(error),
+        };
 
         if rendered.lossy_text {
             tracing::warn!(
@@ -248,7 +336,7 @@ impl Backend for WatermarkBackend {
             );
         }
 
-        let kept = self.keep(&request, &rendered.bytes);
+        let kept = self.keep(request, plan, &rendered.bytes);
 
         let name = format!("{} [{}]", request.name, plan.team);
         let job = Job {
@@ -261,23 +349,45 @@ impl Backend for WatermarkBackend {
             sides: request.sides(),
         };
 
-        self.sink.print(&job).await.map_err(|error| {
-            // The kept copy is the thing to look at when a job fails, so say
-            // where it is in the same breath.
-            match &kept {
-                Some(path) => format!("{error} (the marked document is at {})", path.display()),
-                None => error.to_string(),
+        let error = match self.sink.print(&job).await {
+            Ok(()) => {
+                self.note_success();
+                tracing::info!(
+                    job = request.id,
+                    team = %plan.team,
+                    pages = rendered.pages,
+                    attempt,
+                    format = format.mime(),
+                    "printed"
+                );
+                return Outcome::Printed;
             }
-        })?;
+            Err(error) => error,
+        };
 
-        tracing::info!(
-            job = request.id,
-            team = %plan.team,
-            pages = rendered.pages,
-            format = format.mime(),
-            "printed"
-        );
-        Ok(())
+        // The kept copy is the thing to look at when a job fails, so say
+        // where it is in the same breath.
+        let detail = match &kept {
+            Some(path) => format!("{error} (the marked document is at {})", path.display()),
+            None => error.to_string(),
+        };
+
+        // Only the printer's own "ask me later" answers are worth waiting
+        // out. The sink has already ridden out a short busy spell by the
+        // time one reaches here, so the trouble is the sort that needs a
+        // person: out of paper, jammed, or switched off.
+        if !error.is_retryable() {
+            return Outcome::Failed(detail);
+        }
+
+        self.note_refusal();
+        match defer_for(attempt) {
+            Some(after) => Outcome::Deferred {
+                reason: detail,
+                after,
+            },
+            None => Outcome::Failed(format!("{detail}; gave up after {attempt} attempts")),
+        }
     }
 }
 
@@ -296,6 +406,9 @@ pub fn describe(sink: &Sink, storage: Option<&Path>, teams: &TeamIds) -> String 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use uuid::Uuid;
 
@@ -309,14 +422,91 @@ mod tests {
     }
 
     fn backend_with(storage: Option<PathBuf>, limits: Limits) -> WatermarkBackend {
+        sink_backend(
+            Sink::detect(Some("dry-run"), None, universal_print::DEFAULT_TIMEOUT).unwrap(),
+            storage,
+            limits,
+        )
+    }
+
+    fn sink_backend(sink: Sink, storage: Option<PathBuf>, limits: Limits) -> WatermarkBackend {
         WatermarkBackend::new(
             TeamIds::load(None).unwrap(),
             Layout::default(),
-            Sink::detect(Some("dry-run"), None, universal_print::DEFAULT_TIMEOUT).unwrap(),
+            sink,
             storage,
             Media::A4,
             limits,
         )
+    }
+
+    /// A printer that answers every request with `server-error-busy`, which
+    /// is what a printer with a full queue does.
+    fn busy_printer() -> (String, Arc<AtomicUsize>) {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(AtomicUsize::new(0));
+
+        let counter = Arc::clone(&asked);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                counter.fetch_add(1, Ordering::SeqCst);
+
+                // Read what the client has to say before answering, so it is
+                // never cut off mid-write.
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut scratch = [0u8; 8192];
+                while let Ok(read) = stream.read(&mut scratch) {
+                    if read < scratch.len() {
+                        break;
+                    }
+                }
+
+                // version 2.0, server-error-busy, request id, and the two
+                // operation attributes every response must carry.
+                let mut body = vec![0x02, 0x00, 0x05, 0x07, 0, 0, 0, 1, 0x01];
+                for (tag, name, value) in [
+                    (0x47u8, "attributes-charset", "utf-8"),
+                    (0x48u8, "attributes-natural-language", "en-us"),
+                ] {
+                    body.push(tag);
+                    body.extend_from_slice(&(name.len() as u16).to_be_bytes());
+                    body.extend_from_slice(name.as_bytes());
+                    body.extend_from_slice(&(value.len() as u16).to_be_bytes());
+                    body.extend_from_slice(value.as_bytes());
+                }
+                body.push(0x03);
+
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/ipp\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(&body);
+                let _ = stream.flush();
+            }
+        });
+
+        (format!("ipp://127.0.0.1:{port}/ipp/print"), asked)
+    }
+
+    /// A backend pointed at a printer that will not take anything. The sink's
+    /// own retries are off so the test does not sit through them; by the time
+    /// a job is deferred in earnest they will have been spent anyway.
+    fn busy_backend() -> (WatermarkBackend, Arc<AtomicUsize>) {
+        let (uri, asked) = busy_printer();
+        let sink = Sink::detect(Some(&uri), None, universal_print::DEFAULT_TIMEOUT)
+            .unwrap()
+            .with_retry(universal_print::Retry::none());
+        (sink_backend(sink, None, TEST_LIMITS), asked)
+    }
+
+    async fn plan_for(backend: &WatermarkBackend, request: &JobRequest) -> Plan {
+        backend.validate(request).await.unwrap().plan
     }
 
     fn request(origin: &str, document: Vec<u8>) -> JobRequest {
@@ -418,7 +608,10 @@ mod tests {
 
         let request = request("10.21.32.43", jpeg());
         let accepted = backend.validate(&request).await.unwrap();
-        backend.print(request, accepted.plan).await.unwrap();
+        assert!(matches!(
+            backend.print(&request, &accepted.plan, 1).await,
+            Outcome::Printed
+        ));
 
         let kept: Vec<_> = walk(directory.path());
         assert_eq!(kept.len(), 1, "{kept:?}");
@@ -479,7 +672,111 @@ mod tests {
         let backend = backend(Some(PathBuf::from("/proc/nonexistent/storage")));
         let request = request("10.21.32.43", jpeg());
         let accepted = backend.validate(&request).await.unwrap();
-        assert!(backend.print(request, accepted.plan).await.is_ok());
+        assert!(matches!(
+            backend.print(&request, &accepted.plan, 1).await,
+            Outcome::Printed
+        ));
+    }
+
+    #[test]
+    fn a_job_is_held_a_little_longer_each_time_and_then_no_longer() {
+        assert_eq!(defer_for(1), Some(Duration::from_secs(15)));
+        assert_eq!(defer_for(2), Some(Duration::from_secs(30)));
+        assert_eq!(defer_for(5), Some(Duration::from_secs(240)));
+        // The last attempt has nothing left to wait for.
+        assert_eq!(defer_for(MAX_ATTEMPTS), None);
+        assert_eq!(defer_for(0), None);
+
+        // Long enough to refill the paper, short enough that nobody is left
+        // wondering where their printout went.
+        let held: Duration = (1..MAX_ATTEMPTS).filter_map(defer_for).sum();
+        assert!(
+            held > Duration::from_secs(300) && held < Duration::from_secs(600),
+            "{held:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_busy_printer_defers_the_job_rather_than_losing_it() {
+        let (backend, _) = busy_backend();
+        let request = request("10.21.32.43", jpeg());
+        let plan = plan_for(&backend, &request).await;
+
+        match backend.print(&request, &plan, 1).await {
+            Outcome::Deferred { reason, after } => {
+                assert_eq!(after, Duration::from_secs(15));
+                // The reason reaches the Client as job-state-message.
+                assert!(reason.contains("Busy"), "{reason}");
+            }
+            other => panic!("expected the job to be held, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_job_is_given_up_on_once_it_has_had_its_chances() {
+        let (backend, _) = busy_backend();
+        let request = request("10.21.32.43", jpeg());
+        let plan = plan_for(&backend, &request).await;
+
+        match backend.print(&request, &plan, MAX_ATTEMPTS).await {
+            Outcome::Failed(error) => assert!(error.contains("gave up"), "{error}"),
+            other => panic!("expected the job to be given up on, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_printer_that_just_refused_is_not_asked_again_straight_away() {
+        let (backend, asked) = busy_backend();
+        let first = request("10.21.32.43", jpeg());
+        let second = request("10.0.1.1", jpeg());
+        let plan = plan_for(&backend, &first).await;
+
+        // The first job finds out the hard way.
+        assert!(matches!(
+            backend.print(&first, &plan, 1).await,
+            Outcome::Deferred { .. }
+        ));
+        let after_first = asked.load(Ordering::SeqCst);
+        assert!(after_first > 0, "the printer should have been offered it");
+
+        // The next one is parked on what the first one learnt.
+        let plan = plan_for(&backend, &second).await;
+        assert!(matches!(
+            backend.print(&second, &plan, 1).await,
+            Outcome::Deferred { .. }
+        ));
+        assert_eq!(
+            asked.load(Ordering::SeqCst),
+            after_first,
+            "the printer should not have been troubled a second time"
+        );
+
+        // A job already waiting is always offered: it is what finds out the
+        // printer is working again.
+        assert!(matches!(
+            backend.print(&second, &plan, 2).await,
+            Outcome::Deferred { .. }
+        ));
+        assert!(asked.load(Ordering::SeqCst) > after_first);
+    }
+
+    #[tokio::test]
+    async fn a_job_offered_twice_leaves_one_copy_with_one_timestamp() {
+        let directory = tempfile::tempdir().unwrap();
+        let backend = backend(Some(directory.path().to_path_buf()));
+
+        let request = request("10.21.32.43", jpeg());
+        let plan = plan_for(&backend, &request).await;
+        backend.print(&request, &plan, 1).await;
+        let first = std::fs::read(&walk(directory.path())[0]).unwrap();
+        backend.print(&request, &plan, 2).await;
+
+        // The mark says when the job was handed over, not when it was sent,
+        // so a job held back does not drift and the copy is rewritten rather
+        // than duplicated.
+        let kept = walk(directory.path());
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(first, std::fs::read(&kept[0]).unwrap());
     }
 
     fn walk(root: &Path) -> Vec<PathBuf> {
