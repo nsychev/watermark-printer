@@ -12,7 +12,7 @@ You need a recent stable [Rust](https://www.rust-lang.org/). Run
 
 ```
 $ watermark-printer --help
-An IPP Everywhere printer that watermarks and forwards print jobs
+A virtual printer that watermarks and forwards print jobs
 
 Options:
   -n, --name <NAME>              Printer name [default: Watermark Printer]
@@ -30,6 +30,8 @@ Options:
       --paper-size <PAPER_SIZE>  The only paper size this printer offers
                                  [default: iso_a4_210x297mm]
       --color                    Advertise the printer as colour
+      --watermark-weight <W>     Thickness of the watermark outline, as a
+                                 fraction of its font size [default: 0.03]
 ```
 
 ## Quick Start

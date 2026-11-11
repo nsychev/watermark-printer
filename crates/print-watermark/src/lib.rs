@@ -5,6 +5,9 @@ pub mod text;
 use lopdf::{Dictionary, Object, Stream, dictionary};
 use print_document::{Media, SourceDocument, SourcePage};
 
+/// Watermark resource name.
+const MARK_STATE: &str = "Mark";
+
 /// Sizes and shades of the marks, all in PDF points unless stated.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layout {
@@ -20,7 +23,7 @@ pub struct Layout {
     pub border_width: f64,
     /// Grey level of the frame, 0 black to 1 white.
     pub border_gray: f64,
-    /// Largest type size used for the diagonal overlay. It is reduced to fit
+    /// Largest font size used for the diagonal overlay. It is reduced to fit
     /// the page when the team name is long.
     pub overlay_size: f64,
     /// Angle of the diagonal overlay, in degrees anticlockwise.
@@ -30,7 +33,7 @@ pub struct Layout {
     pub overlay_fill_gray: Option<f64>,
     /// Grey level the overlay glyphs are outlined with.
     pub overlay_stroke_gray: f64,
-    /// Outline width, as a fraction of the type size.
+    /// Outline width, as a fraction of the font size.
     pub overlay_stroke_width: f64,
 }
 
@@ -48,7 +51,7 @@ impl Default for Layout {
             overlay_angle: 26.0,
             // Hollow, so nothing on the page is covered up.
             overlay_fill_gray: None,
-            overlay_stroke_gray: 0.30,
+            overlay_stroke_gray: 0.55,
             overlay_stroke_width: 0.030,
         }
     }
@@ -103,6 +106,11 @@ pub fn render(
 ) -> Result<Rendered> {
     let (mut doc, pages) = source.into_parts();
     let total = pages.len();
+
+    // Blend mode supported in PDF 1.4 onwards.
+    if doc.version.as_str() < "1.4" {
+        doc.version = "1.4".to_string();
+    }
     let mut lossy_text = false;
 
     // The marks are drawn as paths, so the output references no font at all
@@ -139,6 +147,12 @@ pub fn render(
             ],
             "Resources" => dictionary! {
                 "XObject" => xobjects,
+                "ExtGState" => dictionary! {
+                    MARK_STATE => dictionary! {
+                        "Type" => "ExtGState",
+                        "BM" => "Multiply",
+                    },
+                },
                 "ProcSet" => vec!["PDF".into(), "ImageB".into(), "ImageC".into()],
             },
         });
@@ -474,11 +488,6 @@ fn fill(
 }
 
 /// Draws the diagonal team number across the middle of the page.
-///
-/// Text rendering mode 2 fills *and* strokes each glyph: a pale fill keeps the
-/// mark obvious at a glance, while the darker outline keeps its shape readable
-/// where it crosses dark content, and neither hides the text underneath the
-/// way a solid grey block does.
 fn draw_overlay(out: &mut String, marks: &Marks<'_>, sheet: (f64, f64)) -> bool {
     let (sheet_width, sheet_height) = sheet;
     let Marks {
@@ -529,6 +538,7 @@ fn draw_overlay(out: &mut String, marks: &Marks<'_>, sheet: (f64, f64)) -> bool 
         sheet_height / 2.0
     ));
     out.push_str(&format!("{cos:.6} {sin:.6} {:.6} {cos:.6} 0 0 cm\n", -sin));
+    out.push_str(&format!("/{MARK_STATE} gs\n"));
     if let Some(gray) = layout.overlay_fill_gray {
         out.push_str(&format!("{gray:.3} g\n"));
     }
@@ -860,10 +870,92 @@ mod tests {
             !overlay.contains("B\n"),
             "overlay must not fill:\n{overlay}"
         );
-        assert!(overlay.contains("0.300 G"), "{overlay}");
+        assert!(
+            overlay.contains(&format!("{:.3} G", layout.overlay_stroke_gray)),
+            "{overlay}"
+        );
         // Rotated by the configured angle.
         let cos = layout.overlay_angle.to_radians().cos();
         assert!(body.contains(&format!("{cos:.6}")), "{body}");
+    }
+
+    #[test]
+    fn the_overlay_multiplies_with_the_page_and_nothing_else_does() {
+        let layout = Layout::default();
+        let body = content(&layout, &page(595.276, 841.89));
+
+        let overlay = overlay_of(&body);
+        assert!(
+            overlay.contains(&format!("/{MARK_STATE} gs")),
+            "the overlay does not select the mark state:\n{overlay}"
+        );
+        let before = &body[..body.len() - overlay.len()];
+        assert!(
+            !before.contains("gs"),
+            "something before the overlay selects a graphics state:\n{before}"
+        );
+    }
+
+    #[test]
+    fn the_mark_state_is_declared_on_every_page_and_the_pdf_admits_to_it() {
+        let rendered = render(
+            source(595.0, 842.0),
+            &stamp(),
+            &Layout::default(),
+            Media::A4,
+        )
+        .expect("rendering failed");
+        let doc = lopdf::Document::load_mem(&rendered.bytes).expect("the output does not parse");
+
+        assert!(doc.version.as_str() >= "1.4", "version {}", doc.version);
+        let pages = doc.get_pages();
+        assert!(!pages.is_empty());
+        for id in pages.values() {
+            let page = doc.get_dictionary(*id).expect("no page");
+            let resources = page
+                .get(b"Resources")
+                .and_then(|r| r.as_dict())
+                .expect("the page has no resources");
+            let state = resources
+                .get(b"ExtGState")
+                .and_then(|g| g.as_dict())
+                .and_then(|g| g.get(MARK_STATE.as_bytes()))
+                .and_then(|g| g.as_dict())
+                .expect("the page does not declare the mark state");
+            let blend = state
+                .get(b"BM")
+                .and_then(|m| m.as_name())
+                .expect("the mark state names no blend mode");
+            assert_eq!(blend, b"Multiply".as_slice(), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn the_outline_thickness_follows_the_weight_it_is_given() {
+        let thin = Layout {
+            overlay_stroke_width: 0.01,
+            ..Layout::default()
+        };
+        let thick = Layout {
+            overlay_stroke_width: 0.08,
+            ..Layout::default()
+        };
+        let widths = |layout: &Layout| -> f64 {
+            let body = content(layout, &page(595.276, 841.89));
+            let overlay = overlay_of(&body).to_string();
+            let at = overlay
+                .find(" w\n")
+                .expect("the overlay sets no line width");
+            overlay[..at]
+                .split_whitespace()
+                .next_back()
+                .expect("no number before the width operator")
+                .parse()
+                .expect("the line width is not a number")
+        };
+        let (thin, thick) = (widths(&thin), widths(&thick));
+        assert!(thin < thick, "{thin} is not thinner than {thick}");
+        assert!((thick / thin - 8.0).abs() < 1e-6, "{thin} vs {thick}");
     }
 
     #[test]

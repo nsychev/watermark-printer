@@ -103,6 +103,26 @@ struct Args {
 
     #[arg(long, help = "Advertise the printer as colour")]
     color: bool,
+
+    #[arg(
+        long,
+        default_value_t = Layout::default().overlay_stroke_width,
+        value_parser = parse_weight,
+        help = "Thickness of the watermark outline, as a fraction of the font size"
+    )]
+    watermark_weight: f64,
+}
+
+const MAX_WEIGHT: f64 = 0.2;
+
+fn parse_weight(value: &str) -> Result<f64> {
+    let weight: f64 = value
+        .parse()
+        .with_context(|| format!("{value:?} is not a number"))?;
+    if !(weight.is_finite() && weight > 0.0 && weight <= MAX_WEIGHT) {
+        bail!("the watermark weight must be greater than 0 and at most {MAX_WEIGHT}");
+    }
+    Ok(weight)
 }
 
 /// Accepts `host:port`, a bare port, or a bare address.
@@ -143,7 +163,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let address = parse_bind(&args.bind)?;
 
-    let layout = Layout::default();
+    let layout = Layout {
+        overlay_stroke_width: args.watermark_weight,
+        ..Layout::default()
+    };
 
     let sheet = *media::find(&args.paper_size).with_context(|| {
         format!(
