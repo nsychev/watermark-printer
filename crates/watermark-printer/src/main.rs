@@ -11,6 +11,7 @@ use clap::Parser;
 use ippserver::{Printer, PrinterConfig, media, serve};
 use print_document::Media;
 use print_watermark::Layout;
+use tracing_subscriber::EnvFilter;
 use universal_print::{DEFAULT_TIMEOUT, Sink};
 use uuid::Uuid;
 
@@ -104,6 +105,9 @@ struct Args {
     #[arg(long, help = "Advertise the printer as colour")]
     color: bool,
 
+    #[arg(short, long, help = "Enable verbose logging")]
+    verbose: bool,
+
     #[arg(
         long,
         default_value_t = Layout::default().overlay_stroke_width,
@@ -114,6 +118,16 @@ struct Args {
 }
 
 const MAX_WEIGHT: f64 = 0.2;
+
+/// RUST_LOG will override the default.
+fn log_filter(verbose: bool) -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_logging(verbose)))
+}
+
+fn default_logging(verbose: bool) -> String {
+    let level = if verbose { "debug" } else { "info" };
+    format!("watermark_printer={level},ippserver={level},universal_print={level}")
+}
 
 fn parse_weight(value: &str) -> Result<f64> {
     let weight: f64 = value
@@ -153,14 +167,12 @@ fn build_sink(args: &Args) -> Result<Sink> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "watermark_printer=info,ippserver=info".into()),
-        )
+        .with_env_filter(log_filter(args.verbose))
         .init();
 
-    let args = Args::parse();
     let address = parse_bind(&args.bind)?;
 
     let layout = Layout {
@@ -360,6 +372,34 @@ mod tests {
         // And a known one resolves.
         let args = args_with(&["--paper-size", "na_letter_8.5x11in"]);
         assert_eq!(media::find(&args.paper_size).unwrap().width, 21590);
+    }
+
+    #[test]
+    fn verbose_is_off_unless_it_is_asked_for() {
+        assert!(!args_with(&[]).verbose);
+        assert!(args_with(&["--verbose"]).verbose);
+        assert!(args_with(&["-v"]).verbose);
+    }
+
+    #[test]
+    fn verbose_turns_the_debug_logs_on_for_the_printer_and_what_it_prints_with() {
+        let quiet = default_logging(false);
+        assert_eq!(
+            quiet,
+            "watermark_printer=info,ippserver=info,universal_print=info"
+        );
+        // Including the access log the IPP layer writes at debug.
+        let verbose = default_logging(true);
+        for crate_name in ["watermark_printer", "ippserver", "universal_print"] {
+            assert!(
+                verbose.contains(&format!("{crate_name}=debug")),
+                "{verbose}"
+            );
+        }
+        // Both are filters the subscriber will take.
+        for directives in [quiet, verbose] {
+            EnvFilter::builder().parse(&directives).expect(&directives);
+        }
     }
 
     #[test]

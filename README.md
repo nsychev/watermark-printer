@@ -30,6 +30,7 @@ Options:
       --paper-size <PAPER_SIZE>  The only paper size this printer offers
                                  [default: iso_a4_210x297mm]
       --color                    Advertise the printer as colour
+  -v, --verbose                  Log debug detail, with a line per request
       --watermark-weight <W>     Thickness of the watermark outline, as a
                                  fraction of its font size [default: 0.03]
 ```

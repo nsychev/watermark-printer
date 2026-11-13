@@ -998,7 +998,7 @@ dependencies = [
 [[package]]
 name = "ippserver"
 version = "0.1.0"
-source = "git+https://github.com/nsychev/ippserver-rs#fb7b1a665d4bf9201940eac8076e21f997a4a04b"
+source = "git+https://github.com/nsychev/ippserver-rs#8d537e2b022c0f72c8d81e5555ebd24aab6e77c8"
 dependencies = [
  "async-trait",
  "axum",
