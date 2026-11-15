@@ -33,6 +33,8 @@ Options:
   -v, --verbose                  Log debug detail, with a line per request
       --watermark-weight <W>     Thickness of the watermark outline, as a
                                  fraction of its font size [default: 0.03]
+      --watermark-gray <G>       Grey level of the watermark outline, from
+                                 0 black to 1 white [default: 0.55]
 ```
 
 ## Quick Start
