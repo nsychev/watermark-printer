@@ -115,6 +115,14 @@ struct Args {
         help = "Thickness of the watermark outline, as a fraction of the font size"
     )]
     watermark_weight: f64,
+
+    #[arg(
+        long,
+        default_value_t = Layout::default().overlay_stroke_gray,
+        value_parser = parse_gray,
+        help = "Grey level of the watermark outline, from 0 black to 1 white"
+    )]
+    watermark_gray: f64,
 }
 
 const MAX_WEIGHT: f64 = 0.2;
@@ -137,6 +145,16 @@ fn parse_weight(value: &str) -> Result<f64> {
         bail!("the watermark weight must be greater than 0 and at most {MAX_WEIGHT}");
     }
     Ok(weight)
+}
+
+fn parse_gray(value: &str) -> Result<f64> {
+    let gray: f64 = value
+        .parse()
+        .with_context(|| format!("{value:?} is not a number"))?;
+    if !(0.0..=1.0).contains(&gray) {
+        bail!("the watermark grey level must be from 0 to 1");
+    }
+    Ok(gray)
 }
 
 /// Accepts `host:port`, a bare port, or a bare address.
@@ -177,6 +195,7 @@ async fn main() -> Result<()> {
 
     let layout = Layout {
         overlay_stroke_width: args.watermark_weight,
+        overlay_stroke_gray: args.watermark_gray,
         ..Layout::default()
     };
 
@@ -303,6 +322,21 @@ mod tests {
         }
         argv.extend_from_slice(extra);
         Args::try_parse_from(argv).unwrap()
+    }
+
+    #[test]
+    fn the_watermark_gray_is_a_level_from_black_to_white() {
+        assert_eq!(parse_gray("0").unwrap(), 0.0);
+        assert_eq!(parse_gray("0.7").unwrap(), 0.7);
+        assert_eq!(parse_gray("1").unwrap(), 1.0);
+        assert!(parse_gray("-0.1").is_err());
+        assert!(parse_gray("1.5").is_err());
+        assert!(parse_gray("NaN").is_err());
+        assert!(parse_gray("grey").is_err());
+        assert_eq!(
+            args_with(&[]).watermark_gray,
+            Layout::default().overlay_stroke_gray
+        );
     }
 
     #[test]
